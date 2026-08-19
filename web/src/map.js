@@ -1,4 +1,4 @@
-import { Map, NavigationControl, ScaleControl, Marker } from 'maplibre-gl';
+import { Map, NavigationControl, ScaleControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const DEFAULT_STYLE = {
@@ -26,7 +26,7 @@ const DEFAULT_STYLE = {
 const DEFAULT_CENTER = [-1.4701, 53.3811];
 const DEFAULT_ZOOM = 11;
 
-export function createTownRedMap(container, { onReady, onError } = {}) {
+export function createTownRedMap(container, { onReady, onError, onStrokeComplete } = {}) {
   const shell = document.createElement('div');
   shell.className = 'relative h-full min-h-[32rem] overflow-hidden rounded-2xl bg-stone-200';
 
@@ -38,6 +38,7 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   const canvas = document.createElement('canvas');
   canvas.className = 'pointer-events-none absolute inset-0 z-10 h-full w-full';
   canvas.style.background = 'transparent';
+  canvas.style.touchAction = 'none';
   canvas.setAttribute('aria-hidden', 'true');
 
   shell.append(mapElement, canvas);
@@ -56,8 +57,14 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
 
   const ctx = canvas.getContext('2d');
   let strokes = [];
+  let draftStroke = null;
   let destroyed = false;
-  let diagnosticMarker = null;
+  let editor = {
+    enabled: false,
+    mode: 'navigate',
+    brushPixels: 42,
+    opacity: 0.2,
+  };
 
   function resizeCanvas() {
     if (destroyed) return;
@@ -88,6 +95,23 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     return Math.max(1, Math.abs(east.x - start.x));
   }
 
+  function cssPixelsToMetres(point, pixels) {
+    const lat = Number(point.lat);
+    const lng = Number(point.lng);
+    const start = map.project([lng, lat]);
+    const east = map.unproject([start.x + pixels, start.y]);
+
+    const lat1 = (lat * Math.PI) / 180;
+    const lat2 = (east.lat * Math.PI) / 180;
+    const dLat = ((east.lat - lat) * Math.PI) / 180;
+    const dLng = ((east.lng - lng) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+
+    return 6371008.8 * 2 * Math.asin(Math.sqrt(a));
+  }
+
   function projectPoint(point, dpr) {
     const projected = map.project([Number(point.lng), Number(point.lat)]);
     return {
@@ -96,14 +120,17 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     };
   }
 
-  function drawStroke(rawStroke) {
-    const points = Array.isArray(rawStroke?.points)
+  function normalisePoints(rawStroke) {
+    return Array.isArray(rawStroke?.points)
       ? rawStroke.points.filter(
           (point) =>
             Number.isFinite(Number(point?.lng)) && Number.isFinite(Number(point?.lat)),
         )
       : [];
+  }
 
+  function drawStroke(rawStroke) {
+    const points = normalisePoints(rawStroke);
     if (!points.length) return;
 
     const brushMetres = Number(rawStroke.brush_metres ?? rawStroke.brushMetres);
@@ -155,6 +182,7 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
 
     const ordered = [...strokes].sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0));
     for (const stroke of ordered) drawStroke(stroke);
+    if (draftStroke) drawStroke(draftStroke);
   }
 
   function setStrokes(nextStrokes) {
@@ -175,16 +203,13 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     redraw();
   }
 
-  function fitToStrokes() {
-    const points = strokes.flatMap((stroke) =>
-      Array.isArray(stroke.points)
-        ? stroke.points.filter(
-            (point) =>
-              Number.isFinite(Number(point?.lng)) && Number.isFinite(Number(point?.lat)),
-          )
-        : [],
-    );
+  function removeStroke(id) {
+    strokes = strokes.filter((stroke) => stroke.id !== id);
+    redraw();
+  }
 
+  function fitToStrokes() {
+    const points = strokes.flatMap(normalisePoints);
     if (!points.length) return false;
 
     let minLng = Infinity;
@@ -218,44 +243,81 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     return true;
   }
 
+  function setEditor(next) {
+    editor = { ...editor, ...next };
+    const painting = editor.enabled && editor.mode !== 'navigate';
+    canvas.style.pointerEvents = painting ? 'auto' : 'none';
+    canvas.style.cursor = editor.mode === 'erase' ? 'cell' : 'crosshair';
+    map.dragPan.enable();
+  }
+
+  function eventToPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    const lngLat = map.unproject([event.clientX - rect.left, event.clientY - rect.top]);
+    return { lng: lngLat.lng, lat: lngLat.lat };
+  }
+
+  function pointDistanceMetres(a, b) {
+    const lat1 = (a.lat * Math.PI) / 180;
+    const lat2 = (b.lat * Math.PI) / 180;
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 6371008.8 * 2 * Math.asin(Math.sqrt(h));
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (!editor.enabled || editor.mode === 'navigate') return;
+
+    event.preventDefault();
+    canvas.setPointerCapture(event.pointerId);
+
+    const point = eventToPoint(event);
+    draftStroke = {
+      mode: editor.mode,
+      brush_metres: cssPixelsToMetres(point, editor.brushPixels),
+      opacity: editor.opacity,
+      points: [point],
+    };
+    redraw();
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (!draftStroke) return;
+    event.preventDefault();
+
+    const point = eventToPoint(event);
+    const previous = draftStroke.points[draftStroke.points.length - 1];
+    const spacing = Math.max(0.5, draftStroke.brush_metres / 15);
+
+    if (pointDistanceMetres(previous, point) >= spacing) {
+      draftStroke.points.push(point);
+      redraw();
+    }
+  });
+
+  function finishDraft(event) {
+    if (!draftStroke) return;
+
+    if (event?.pointerId != null && canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+
+    const finished = draftStroke;
+    draftStroke = null;
+    redraw();
+    onStrokeComplete?.(finished);
+  }
+
+  canvas.addEventListener('pointerup', finishDraft);
+  canvas.addEventListener('pointercancel', finishDraft);
+
   map.on('load', () => {
     map.resize();
     redraw();
-
-    const mapCanvas = map.getCanvas();
-    const rect = mapCanvas.getBoundingClientRect();
-    console.info('[Town Red] MapLibre loaded', {
-      canvasWidth: mapCanvas.width,
-      canvasHeight: mapCanvas.height,
-      cssWidth: rect.width,
-      cssHeight: rect.height,
-      styleLoaded: map.isStyleLoaded(),
-      center: map.getCenter().toArray(),
-      zoom: map.getZoom(),
-    });
-
-    const markerElement = document.createElement('div');
-    markerElement.textContent = 'MapLibre loaded';
-    markerElement.style.padding = '4px 8px';
-    markerElement.style.borderRadius = '999px';
-    markerElement.style.background = '#991b1b';
-    markerElement.style.color = '#fff';
-    markerElement.style.font = '12px system-ui, sans-serif';
-    markerElement.style.whiteSpace = 'nowrap';
-
-    diagnosticMarker = new Marker({ element: markerElement })
-      .setLngLat(DEFAULT_CENTER)
-      .addTo(map);
-
     onReady?.(map);
-  });
-
-  map.on('idle', () => {
-    console.info('[Town Red] MapLibre idle', {
-      loaded: map.loaded(),
-      styleLoaded: map.isStyleLoaded(),
-      areTilesLoaded: map.areTilesLoaded(),
-    });
   });
 
   map.on('move', redraw);
@@ -276,14 +338,14 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     map,
     setStrokes,
     upsertStroke,
+    removeStroke,
     fitToStrokes,
+    setEditor,
     redraw,
     destroy() {
       if (destroyed) return;
       destroyed = true;
       resizeObserver.disconnect();
-      diagnosticMarker?.remove();
-      diagnosticMarker = null;
 
       try {
         map.remove();
