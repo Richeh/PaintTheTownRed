@@ -5,3 +5,4 @@ web/.env.*
 !web/.env.example
 web/dist/
 chrome-extension/dist/
+chrome-extension/release/
