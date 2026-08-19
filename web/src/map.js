@@ -1,7 +1,26 @@
 import { Map, NavigationControl, ScaleControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-const DEFAULT_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const DEFAULT_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors',
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    {
+      id: 'osm',
+      type: 'raster',
+      source: 'osm',
+    },
+  ],
+};
+
 const DEFAULT_CENTER = [-1.4701, 53.3811];
 const DEFAULT_ZOOM = 11;
 
