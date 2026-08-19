@@ -23,8 +23,6 @@ services:
 
 networks:
   TownRed:
-    external: true
-    name: TownRed
   traefik-proxy:
     external: true
     name: traefik-proxy
