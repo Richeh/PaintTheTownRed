@@ -1,8 +1,5 @@
-import { Map, NavigationControl, ScaleControl, setWorkerUrl } from 'maplibre-gl';
+import { Map, NavigationControl, ScaleControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-
-setWorkerUrl(workerUrl);
 
 const DEFAULT_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const DEFAULT_CENTER = [-1.4701, 53.3811];
@@ -190,7 +187,10 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
 
   map.on('move', redraw);
   map.on('resize', redraw);
-  map.on('error', (event) => onError?.(event.error || event));
+  map.on('error', (event) => {
+    console.error('[Town Red] MapLibre error', event?.error || event);
+    onError?.(event?.error || event);
+  });
 
   const resizeObserver = new ResizeObserver(() => {
     map.resize();
