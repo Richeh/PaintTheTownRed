@@ -25,7 +25,7 @@ function fallbackName(userId, currentUserId) {
   return `Collaborator ${String(userId || '').slice(0, 6)}`;
 }
 
-export function createLayerController({ container, currentUserId, onVisibilityChange } = {}) {
+export function createLayerController({ container, currentUserId: initialUserId, onVisibilityChange } = {}) {
   container.classList.add('relative');
 
   const panel = document.createElement('div');
@@ -45,6 +45,7 @@ export function createLayerController({ container, currentUserId, onVisibilityCh
   const list = panel.querySelector('[data-layer-list]');
   const toggleAllButton = panel.querySelector('button');
 
+  let currentUserId = initialUserId || null;
   let mapId = null;
   let contributors = [];
   let hidden = new Set();
@@ -133,6 +134,11 @@ export function createLayerController({ container, currentUserId, onVisibilityCh
     }
   }
 
+  function setCurrentUserId(userId) {
+    currentUserId = userId || null;
+    render();
+  }
+
   function visibleStrokes(strokes) {
     return (strokes || []).filter((stroke) => !hidden.has(stroke.created_by));
   }
@@ -144,6 +150,7 @@ export function createLayerController({ container, currentUserId, onVisibilityCh
 
   return {
     update,
+    setCurrentUserId,
     visibleStrokes,
     destroy,
   };
