@@ -3,7 +3,7 @@ services:
     image: nginx:latest # Using the default Nginx image with custom configuration.
     volumes:
       # Mount the application code for live updates
-      - ./:/var/www
+      - ./web/dist:/var/www
       # Mount the Nginx configuration file
       - ./docker/nginx/nginx.conf:/etc/common/nginx/nginx.conf:ro
     environment:
