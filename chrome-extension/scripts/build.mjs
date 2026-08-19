@@ -14,10 +14,6 @@ const distDir = path.join(extensionRoot, 'dist');
 const storageShim = String.raw`
 import { createClient } from '@supabase/supabase-js';
 
-// The Tampermonkey prototype uses synchronous GM_* storage. MAIN-world content
-// scripts cannot call extension APIs directly, so the first Chrome build keeps
-// those semantics using namespaced Rightmove localStorage. This preserves the
-// existing anonymous Supabase identity and cached/settings behaviour cleanly.
 const supabase = { createClient };
 const STORAGE_PREFIX = 'town-red-extension:';
 function GM_getValue(key, fallback) {
@@ -36,12 +32,59 @@ function GM_deleteValue(key) {
 }
 `;
 
+const earlyMapHook = String.raw`(() => {
+  'use strict';
+  window.__townRedMaps ||= [];
+
+  function rememberMap(map) {
+    if (map && !window.__townRedMaps.includes(map)) {
+      window.__townRedMaps.push(map);
+      console.info('[Town Red] early-captured Google Map', map);
+    }
+    return map;
+  }
+
+  function wrapMap(holder, key = 'Map') {
+    if (!holder) return false;
+    let Original;
+    try { Original = holder[key]; } catch { return false; }
+    if (typeof Original !== 'function' || Original.__townRedWrapped) return false;
+
+    function WrappedMap(...args) {
+      return rememberMap(Reflect.construct(Original, args, Original));
+    }
+    try { Object.setPrototypeOf(WrappedMap, Original); } catch {}
+    try { WrappedMap.prototype = Original.prototype; } catch {}
+    try { Object.defineProperty(WrappedMap, '__townRedWrapped', { value: true }); } catch {}
+    try { holder[key] = WrappedMap; return true; } catch { return false; }
+  }
+
+  let importLibraryHooked = false;
+  const timer = setInterval(() => {
+    const maps = window.google?.maps;
+    if (!maps) return;
+    if (!importLibraryHooked && typeof maps.importLibrary === 'function') {
+      const originalImport = maps.importLibrary.bind(maps);
+      maps.importLibrary = async (...args) => {
+        const library = await originalImport(...args);
+        if (library && typeof library.Map === 'function') wrapMap(library, 'Map');
+        return library;
+      };
+      importLibraryHooked = true;
+    }
+    if (typeof maps.Map === 'function') wrapMap(maps, 'Map');
+  }, 1);
+
+  setTimeout(() => clearInterval(timer), 30000);
+})();
+`;
+
 function transformUserscript(source) {
   const withoutHeader = source.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, '');
   return storageShim + '\n' + withoutHeader
     .replace('const PAGE = unsafeWindow;', 'const PAGE = window;')
     .replace("const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;')
-    .replace('Rightmove shared geographic client v0.3.1 loaded', 'Rightmove Chrome extension client v0.1.0 loaded');
+    .replace(/Rightmove shared geographic client v[\d.]+ loaded/, 'Rightmove Chrome extension client v0.1.1 loaded');
 }
 
 async function buildOnce() {
@@ -51,6 +94,8 @@ async function buildOnce() {
 
   await rm(distDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
+
+  await writeFile(path.join(distDir, 'map-hook.js'), earlyMapHook);
 
   await build({
     stdin: {
