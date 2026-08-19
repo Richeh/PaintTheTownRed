@@ -124,11 +124,13 @@ export async function createStroke({ mapId, userId, mode, brushMetres, opacity, 
   return data;
 }
 
+const MARKER_COLUMNS = 'id,map_id,created_by,kind,label,longitude,latitude,created_at,updated_at';
+
 export async function loadMarkers(mapId) {
   if (!mapId) return [];
   const { data, error } = await supabase
     .from('markers')
-    .select('id,map_id,created_by,kind,label,longitude,latitude,created_at,updated_at')
+    .select(MARKER_COLUMNS)
     .eq('map_id', mapId)
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -146,10 +148,37 @@ export async function createMarker({ mapId, userId, kind, label, longitude, lati
       longitude,
       latitude,
     })
-    .select('id,map_id,created_by,kind,label,longitude,latitude,created_at,updated_at')
+    .select(MARKER_COLUMNS)
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function updateMarker({ id, kind, label, longitude, latitude }) {
+  const changes = {
+    kind,
+    label: label.trim(),
+    updated_at: new Date().toISOString(),
+  };
+  if (Number.isFinite(Number(longitude))) changes.longitude = Number(longitude);
+  if (Number.isFinite(Number(latitude))) changes.latitude = Number(latitude);
+
+  const { data, error } = await supabase
+    .from('markers')
+    .update(changes)
+    .eq('id', id)
+    .select(MARKER_COLUMNS)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteMarker(id) {
+  const { error } = await supabase
+    .from('markers')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
 }
 
 async function setRealtimeAuth() {
