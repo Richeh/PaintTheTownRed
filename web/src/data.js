@@ -83,6 +83,49 @@ export async function createMapInvite({ mapId, role = 'editor', maxUses = 1 }) {
   return null;
 }
 
+export async function getProfile(userId) {
+  if (!userId) return null;
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('user_id,display_name,created_at,updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+export async function saveProfile({ userId, displayName }) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .upsert(
+      {
+        user_id: userId,
+        display_name: displayName.trim(),
+      },
+      { onConflict: 'user_id' },
+    )
+    .select('user_id,display_name,created_at,updated_at')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function loadProfiles(userIds) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('user_id,display_name')
+    .in('user_id', ids);
+
+  if (error) throw error;
+  return data || [];
+}
+
 export async function loadStrokes(mapId) {
   if (!mapId) return [];
 
