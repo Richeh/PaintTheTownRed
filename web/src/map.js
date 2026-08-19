@@ -1,22 +1,24 @@
-import { Map, NavigationControl, ScaleControl } from 'maplibre-gl';
+import { Map, NavigationControl, ScaleControl, Marker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const DEFAULT_STYLE = {
   version: 8,
+  id: 'town-red-raster',
   sources: {
-    osm: {
+    'raster-tiles': {
       type: 'raster',
       tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
       tileSize: 256,
-      attribution: '© OpenStreetMap contributors',
+      minzoom: 0,
       maxzoom: 19,
+      attribution: '© OpenStreetMap contributors',
     },
   },
   layers: [
     {
-      id: 'osm',
+      id: 'simple-tiles',
       type: 'raster',
-      source: 'osm',
+      source: 'raster-tiles',
     },
   ],
 };
@@ -29,10 +31,13 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   shell.className = 'relative h-full min-h-[32rem] overflow-hidden rounded-2xl bg-stone-200';
 
   const mapElement = document.createElement('div');
-  mapElement.className = 'absolute inset-0';
+  mapElement.className = 'absolute inset-0 z-0';
+  mapElement.style.width = '100%';
+  mapElement.style.height = '100%';
 
   const canvas = document.createElement('canvas');
-  canvas.className = 'pointer-events-none absolute inset-0 h-full w-full';
+  canvas.className = 'pointer-events-none absolute inset-0 z-10 h-full w-full';
+  canvas.style.background = 'transparent';
   canvas.setAttribute('aria-hidden', 'true');
 
   shell.append(mapElement, canvas);
@@ -52,6 +57,7 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   const ctx = canvas.getContext('2d');
   let strokes = [];
   let destroyed = false;
+  let diagnosticMarker = null;
 
   function resizeCanvas() {
     if (destroyed) return;
@@ -91,7 +97,13 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   }
 
   function drawStroke(rawStroke) {
-    const points = Array.isArray(rawStroke?.points) ? rawStroke.points : [];
+    const points = Array.isArray(rawStroke?.points)
+      ? rawStroke.points.filter(
+          (point) =>
+            Number.isFinite(Number(point?.lng)) && Number.isFinite(Number(point?.lat)),
+        )
+      : [];
+
     if (!points.length) return;
 
     const brushMetres = Number(rawStroke.brush_metres ?? rawStroke.brushMetres);
@@ -164,7 +176,15 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   }
 
   function fitToStrokes() {
-    const points = strokes.flatMap((stroke) => (Array.isArray(stroke.points) ? stroke.points : []));
+    const points = strokes.flatMap((stroke) =>
+      Array.isArray(stroke.points)
+        ? stroke.points.filter(
+            (point) =>
+              Number.isFinite(Number(point?.lng)) && Number.isFinite(Number(point?.lat)),
+          )
+        : [],
+    );
+
     if (!points.length) return false;
 
     let minLng = Infinity;
@@ -175,7 +195,6 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     for (const point of points) {
       const lng = Number(point.lng);
       const lat = Number(point.lat);
-      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
       minLng = Math.min(minLng, lng);
       maxLng = Math.max(maxLng, lng);
       minLat = Math.min(minLat, lat);
@@ -200,8 +219,43 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   }
 
   map.on('load', () => {
+    map.resize();
     redraw();
+
+    const mapCanvas = map.getCanvas();
+    const rect = mapCanvas.getBoundingClientRect();
+    console.info('[Town Red] MapLibre loaded', {
+      canvasWidth: mapCanvas.width,
+      canvasHeight: mapCanvas.height,
+      cssWidth: rect.width,
+      cssHeight: rect.height,
+      styleLoaded: map.isStyleLoaded(),
+      center: map.getCenter().toArray(),
+      zoom: map.getZoom(),
+    });
+
+    const markerElement = document.createElement('div');
+    markerElement.textContent = 'MapLibre loaded';
+    markerElement.style.padding = '4px 8px';
+    markerElement.style.borderRadius = '999px';
+    markerElement.style.background = '#991b1b';
+    markerElement.style.color = '#fff';
+    markerElement.style.font = '12px system-ui, sans-serif';
+    markerElement.style.whiteSpace = 'nowrap';
+
+    diagnosticMarker = new Marker({ element: markerElement })
+      .setLngLat(DEFAULT_CENTER)
+      .addTo(map);
+
     onReady?.(map);
+  });
+
+  map.on('idle', () => {
+    console.info('[Town Red] MapLibre idle', {
+      loaded: map.loaded(),
+      styleLoaded: map.isStyleLoaded(),
+      areTilesLoaded: map.areTilesLoaded(),
+    });
   });
 
   map.on('move', redraw);
@@ -212,6 +266,7 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
   });
 
   const resizeObserver = new ResizeObserver(() => {
+    if (destroyed) return;
     map.resize();
     redraw();
   });
@@ -224,9 +279,17 @@ export function createTownRedMap(container, { onReady, onError } = {}) {
     fitToStrokes,
     redraw,
     destroy() {
+      if (destroyed) return;
       destroyed = true;
       resizeObserver.disconnect();
-      map.remove();
+      diagnosticMarker?.remove();
+      diagnosticMarker = null;
+
+      try {
+        map.remove();
+      } catch (error) {
+        console.warn('[Town Red] MapLibre teardown warning', error);
+      }
     },
   };
 }
