@@ -1,36 +1,55 @@
 # Town Red Chrome extension
 
-This directory builds the working Rightmove Tampermonkey prototype as a Manifest V3 Chrome extension.
+This directory builds the working Rightmove integration as a Manifest V3 Chrome extension.
 
-The important design choice is that the Tampermonkey userscript remains the source of truth for the Rightmove integration. The build script reads `../tampermonkey/town-red-rightmove.user.js`, removes the userscript metadata, swaps the Tampermonkey-specific environment pieces for extension-compatible equivalents, bundles Supabase locally, and writes a loadable extension to `dist/`.
+The Tampermonkey userscript remains the source of truth for the Rightmove overlay behaviour. The extension build reads `../tampermonkey/town-red-rightmove.user.js`, removes userscript metadata, swaps the Tampermonkey-specific environment pieces for extension-compatible equivalents, bundles Supabase locally, adds the early Google Maps hook and icons, and writes a loadable extension to `dist/`.
 
-## Why MAIN world?
+## Runtime architecture
 
-Town Red needs access to the actual Google Maps objects created by Rightmove so it can capture the map instance and use `OverlayView` projections. Tampermonkey provides that through `unsafeWindow`. A normal Chrome content script runs in an isolated JavaScript world and cannot directly access those page-owned objects, so the extension declares its content script with `"world": "MAIN"` and runs at `document_start`.
+Town Red needs access to the Google Maps objects created by Rightmove so it can use `OverlayView` projections. The extension therefore runs a tiny `map-hook.js` first at `document_start` and then the bundled Town Red client. Both currently run in Chrome's `MAIN` world because that is the proven integration path from the Tampermonkey prototype.
+
+A later hardening refactor can move Supabase/application state into an isolated content-script world and leave only a projection bridge in `MAIN`. That is not required for the current release and is deliberately deferred until after the first packaged release is proven.
 
 ## Install dependencies
-
-From this directory:
 
 ```bash
 npm install
 ```
 
-## Build
+## Development build
 
 ```bash
 npm run build
 ```
 
-This produces:
+This produces an unpacked extension in `dist/` with inline source maps for easier local debugging.
+
+## Production/Web Store package
+
+```bash
+npm run package
+```
+
+This performs a clean minified production build with no source map, generates Chrome icons from `../assets/logo/townred.png`, and creates a ZIP suitable for Chrome Web Store upload.
+
+Output:
 
 ```text
 dist/
 ├── manifest.json
-└── content.js
+├── map-hook.js
+├── content.js
+└── icons/
+    ├── icon-16.png
+    ├── icon-32.png
+    ├── icon-48.png
+    └── icon-128.png
+
+release/
+└── town-red-rightmove-<version>.zip
 ```
 
-Supabase is bundled into `content.js`; the extension does not load executable JavaScript from a CDN.
+The ZIP root is the extension root; it contains runtime files only.
 
 ## Load unpacked in Chrome
 
@@ -38,9 +57,7 @@ Supabase is bundled into `content.js`; the extension does not load executable Ja
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select `chrome-extension/dist/`.
-5. Open or reload a Rightmove property map page.
-
-The normal Town Red toolbar should appear over the Rightmove map.
+5. Open or reload a supported Rightmove property map page.
 
 After rebuilding, click the extension's **Reload** button on `chrome://extensions` and reload Rightmove.
 
@@ -50,20 +67,37 @@ After rebuilding, click the extension's **Reload** button on `chrome://extension
 npm run dev
 ```
 
-This rebuilds whenever the Tampermonkey userscript or extension manifest changes. Chrome still needs its extension Reload button pressed after a rebuild.
+This watches the Tampermonkey source, extension manifest and source icon. Chrome still needs its extension Reload button pressed after a rebuild.
+
+## Icons
+
+The canonical icon assets live in:
+
+```text
+../assets/logo/townred.png
+../assets/logo/townred.svg
+```
+
+The PNG is the source for generated 16, 32, 48 and 128 pixel extension icons. Do not edit generated `dist/icons/` files.
 
 ## Storage
 
-The Tampermonkey script currently expects synchronous `GM_getValue`, `GM_setValue`, and `GM_deleteValue` calls. MAIN-world scripts cannot directly use extension APIs such as `chrome.storage`, so the first extension version implements those calls using a Town-Red-prefixed `localStorage` namespace on Rightmove.
-
-This keeps the conversion small and preserves the proven synchronous auth/cache behaviour. It also means the extension and Tampermonkey installation have separate anonymous identities and settings.
-
-A later refactor can split Town Red into a small MAIN-world Google Maps bridge plus an isolated-world application script. That would let the app use `chrome.storage` and extension messaging while keeping page-object access confined to the bridge.
+The shared userscript currently expects synchronous `GM_getValue`, `GM_setValue`, and `GM_deleteValue` calls. The extension implements those calls with a Town-Red-prefixed Rightmove `localStorage` namespace. This preserves the proven authentication/cache behaviour but means the extension and Tampermonkey prototype use separate anonymous identities and settings.
 
 ## Permissions
 
-The extension intentionally asks only for access to Rightmove and the configured Town Red Supabase project. No broad browsing-history, tabs, or `scripting` permission is required because the Rightmove integration is declared as a static content script.
+The manifest intentionally avoids broad Chrome API permissions. It runs only on the supported Rightmove map URL patterns and declares the Town Red Supabase project as its network host permission. Supabase's publishable key is bundled in the client by design; no secret or service-role key is included.
+
+## Chrome Web Store material
+
+- `STORE_LISTING.md` contains suggested listing text and permission/privacy explanations.
+- `SUBMISSION_CHECKLIST.md` contains the clean-install and upload checklist.
+- The standalone web app publishes `web/public/privacy.html`; deploy the web app and use its `/privacy.html` URL in the Web Store listing.
+
+## Versioning
+
+Increment `version` in `manifest.json` before every Web Store update. Keep `package.json` aligned for clarity. `npm run package` names the ZIP from the manifest version.
 
 ## Source relationship
 
-Do not edit `dist/content.js` directly. Edit the Tampermonkey source when changing shared Rightmove behaviour, or edit `scripts/build.mjs` / `manifest.json` for extension-specific behaviour, then rebuild.
+Do not edit `dist/content.js`, `dist/map-hook.js`, generated icons or release ZIPs directly. Edit the Tampermonkey source for shared Rightmove behaviour, or edit `scripts/build.mjs` / `manifest.json` for extension-specific behaviour, then rebuild.
