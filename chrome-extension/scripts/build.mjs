@@ -1,4 +1,7 @@
 import { build } from 'esbuild';
+import archiver from 'archiver';
+import sharp from 'sharp';
+import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import path from 'node:path';
@@ -9,7 +12,9 @@ const extensionRoot = path.resolve(here, '..');
 const repoRoot = path.resolve(extensionRoot, '..');
 const userscriptPath = path.join(repoRoot, 'tampermonkey', 'town-red-rightmove.user.js');
 const manifestPath = path.join(extensionRoot, 'manifest.json');
+const sourceIconPath = path.join(repoRoot, 'assets', 'logo', 'townred.png');
 const distDir = path.join(extensionRoot, 'dist');
+const releaseDir = path.join(extensionRoot, 'release');
 
 const storageShim = String.raw`
 import { createClient } from '@supabase/supabase-js';
@@ -79,22 +84,33 @@ const earlyMapHook = String.raw`(() => {
 })();
 `;
 
-function transformUserscript(source) {
+function transformUserscript(source, version) {
   const withoutHeader = source.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, '');
   return storageShim + '\n' + withoutHeader
     .replace('const PAGE = unsafeWindow;', 'const PAGE = window;')
     .replace("const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;')
-    .replace(/Rightmove shared geographic client v[\d.]+ loaded/, 'Rightmove Chrome extension client v0.1.1 loaded');
+    .replace(/Rightmove shared geographic client v[\d.]+ loaded/, `Rightmove Chrome extension client v${version} loaded`);
 }
 
-async function buildOnce() {
+async function buildIcons() {
+  const iconDir = path.join(distDir, 'icons');
+  await mkdir(iconDir, { recursive: true });
+  for (const size of [16, 32, 48, 128]) {
+    await sharp(sourceIconPath)
+      .resize(size, size, { fit: 'contain' })
+      .png()
+      .toFile(path.join(iconDir, `icon-${size}.png`));
+  }
+}
+
+async function buildOnce({ production = false } = {}) {
   const source = await readFile(userscriptPath, 'utf8');
-  const manifest = await readFile(manifestPath, 'utf8');
-  const entry = transformUserscript(source);
+  const manifestText = await readFile(manifestPath, 'utf8');
+  const manifest = JSON.parse(manifestText);
+  const entry = transformUserscript(source, manifest.version);
 
   await rm(distDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
-
   await writeFile(path.join(distDir, 'map-hook.js'), earlyMapHook);
 
   await build({
@@ -108,19 +124,49 @@ async function buildOnce() {
     format: 'iife',
     platform: 'browser',
     target: ['chrome120'],
-    minify: false,
-    sourcemap: 'inline',
+    minify: production,
+    sourcemap: production ? false : 'inline',
+    legalComments: production ? 'none' : 'inline',
     outfile: path.join(distDir, 'content.js'),
     logLevel: 'info',
   });
 
-  await writeFile(path.join(distDir, 'manifest.json'), manifest);
-  console.log('[Town Red] Chrome extension built in chrome-extension/dist');
+  await buildIcons();
+  await writeFile(path.join(distDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`[Town Red] Chrome extension ${production ? 'production ' : ''}build complete`);
+  return manifest;
 }
 
-await buildOnce();
+async function packageRelease() {
+  const manifest = await buildOnce({ production: true });
+  await rm(releaseDir, { recursive: true, force: true });
+  await mkdir(releaseDir, { recursive: true });
+  const zipPath = path.join(releaseDir, `town-red-rightmove-${manifest.version}.zip`);
 
-if (process.argv.includes('--watch')) {
+  await new Promise((resolve, reject) => {
+    const output = createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+    archive.pipe(output);
+    archive.directory(distDir, false);
+    archive.finalize();
+  });
+
+  console.log(`[Town Red] Web Store package: ${zipPath}`);
+}
+
+const packageMode = process.argv.includes('--package');
+const watchMode = process.argv.includes('--watch');
+
+if (packageMode) {
+  await packageRelease();
+} else {
+  await buildOnce();
+}
+
+if (watchMode) {
   let timer = null;
   const rebuild = () => {
     clearTimeout(timer);
@@ -128,5 +174,6 @@ if (process.argv.includes('--watch')) {
   };
   watch(userscriptPath, rebuild);
   watch(manifestPath, rebuild);
-  console.log('[Town Red] Watching userscript and manifest for changes...');
+  watch(sourceIconPath, rebuild);
+  console.log('[Town Red] Watching userscript, manifest and icon for changes...');
 }
