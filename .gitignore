@@ -1,2 +1,6 @@
 node_modules/
-supabase/.temp
+supabase/.temp/
+web/.env
+web/.env.*
+!web/.env.example
+web/dist/
