@@ -1,6 +1,7 @@
 import './styles.css';
 import { ensureAnonymousSession } from './supabase.js';
 import {
+  createMapInvite,
   createSharedMap,
   createStroke,
   joinSharedMap,
@@ -33,37 +34,23 @@ app.innerHTML = `
             </select>
           </label>
 
-          <button
-            id="create-map"
-            type="button"
-            class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled
-          >
+          <button id="create-map" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
             New map
           </button>
 
-          <button
-            id="join-map"
-            type="button"
-            class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled
-          >
+          <button id="join-map" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
             Join
           </button>
 
-          <button
-            id="fit-overlay"
-            type="button"
-            class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled
-          >
+          <button id="invite-map" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
+            Invite
+          </button>
+
+          <button id="fit-overlay" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
             Fit overlay
           </button>
 
-          <span
-            id="connection-status"
-            class="shrink-0 rounded-full border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs font-semibold text-stone-600"
-          >Starting…</span>
+          <span id="connection-status" class="shrink-0 rounded-full border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs font-semibold text-stone-600">Starting…</span>
         </div>
       </div>
 
@@ -109,6 +96,7 @@ const editStatus = document.querySelector('#edit-status');
 const mapSelect = document.querySelector('#shared-map-select');
 const createMapButton = document.querySelector('#create-map');
 const joinMapButton = document.querySelector('#join-map');
+const inviteMapButton = document.querySelector('#invite-map');
 const fitButton = document.querySelector('#fit-overlay');
 const mapContainer = document.querySelector('#map-container');
 const brushSize = document.querySelector('#brush-size');
@@ -145,23 +133,20 @@ function canEdit() {
 
 function setConnectionStatus(label, state = 'idle') {
   connectionStatus.textContent = label;
-
   const common = 'shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold';
   const stateClasses = {
     connected: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     error: 'border-red-200 bg-red-50 text-red-800',
     idle: 'border-stone-300 bg-stone-100 text-stone-600',
   };
-
   connectionStatus.className = `${common} ${stateClasses[state] || stateClasses.idle}`;
 }
 
 function updateEditor() {
   const editable = Boolean(selectedMapId && canEdit());
+  const owner = selectedMap()?.role === 'owner';
 
-  if (!editable && mode !== 'navigate') {
-    mode = 'navigate';
-  }
+  if (!editable && mode !== 'navigate') mode = 'navigate';
 
   renderer.setEditor({
     enabled: editable,
@@ -182,13 +167,11 @@ function updateEditor() {
     }`;
   }
 
-  if (!selectedMapId) {
-    editStatus.textContent = 'Choose a shared map to paint';
-  } else if (!editable) {
-    editStatus.textContent = 'Viewer access · painting disabled';
-  } else {
-    editStatus.textContent = `${selectedMap()?.role} access · ${mode === 'navigate' ? 'navigation mode' : `${mode} brush active`}`;
-  }
+  inviteMapButton.disabled = !userId || !owner;
+
+  if (!selectedMapId) editStatus.textContent = 'Choose a shared map to paint';
+  else if (!editable) editStatus.textContent = 'Viewer access · painting disabled';
+  else editStatus.textContent = `${selectedMap()?.role} access · ${mode === 'navigate' ? 'navigation mode' : `${mode} brush active`}`;
 }
 
 function renderMapOptions() {
@@ -208,10 +191,9 @@ async function refreshMapList(preferMapId = selectedMapId) {
   sharedMaps = await listSharedMaps(userId);
   renderMapOptions();
 
-  const target =
-    preferMapId && sharedMaps.some((map) => map.id === preferMapId)
-      ? preferMapId
-      : sharedMaps[0]?.id || null;
+  const target = preferMapId && sharedMaps.some((map) => map.id === preferMapId)
+    ? preferMapId
+    : sharedMaps[0]?.id || null;
 
   await selectMap(target);
 }
@@ -227,17 +209,11 @@ function escapeHtml(value) {
 
 function mergeStroke(stroke) {
   const index = strokes.findIndex((item) => item.id === stroke.id);
-
-  if (index >= 0) {
-    strokes[index] = stroke;
-  } else {
-    strokes.push(stroke);
-  }
+  if (index >= 0) strokes[index] = stroke;
+  else strokes.push(stroke);
 
   strokes.sort(
-    (a, b) =>
-      Number(a.sequence ?? Number.MAX_SAFE_INTEGER) -
-      Number(b.sequence ?? Number.MAX_SAFE_INTEGER),
+    (a, b) => Number(a.sequence ?? Number.MAX_SAFE_INTEGER) - Number(b.sequence ?? Number.MAX_SAFE_INTEGER),
   );
   renderer.setStrokes(strokes);
   updateOverlayStatus();
@@ -287,7 +263,6 @@ async function saveDrawnStroke(stroke) {
       opacity: stroke.opacity,
       points: stroke.points,
     });
-
     mergeStroke(saved);
     setConnectionStatus('Live', 'connected');
   } catch (error) {
@@ -306,13 +281,11 @@ async function refreshStrokes({ quiet = false } = {}) {
   if (!quiet) setConnectionStatus('Loading overlay…');
 
   const next = await loadStrokes(mapIdAtStart);
-
   if (selectedMapId !== mapIdAtStart) return;
 
   strokes = next;
   renderer.setStrokes(strokes);
   updateOverlayStatus();
-
   if (!quiet) setConnectionStatus('Live', 'connected');
 }
 
@@ -331,17 +304,14 @@ async function selectMap(mapId, { fit = true } = {}) {
   mapSelect.value = selectedMapId;
   await refreshStrokes();
 
-  if (fit && strokes.length) {
-    renderer.fitToStrokes();
-  }
+  if (fit && strokes.length) renderer.fitToStrokes();
 
   unsubscribeRealtime = await subscribeToStrokeInserts(
     selectedMapId,
     (stroke) => mergeStroke(stroke),
     (status, error) => {
-      if (status === 'SUBSCRIBED') {
-        setConnectionStatus('Live', 'connected');
-      } else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+      if (status === 'SUBSCRIBED') setConnectionStatus('Live', 'connected');
+      else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
         console.warn('[Town Red] Realtime status', status, error);
         setConnectionStatus('Sync degraded', 'error');
       }
@@ -368,6 +338,7 @@ async function handleCreateMap() {
   } finally {
     createMapButton.disabled = !userId;
     joinMapButton.disabled = !userId;
+    updateEditor();
   }
 }
 
@@ -390,6 +361,44 @@ async function handleJoinMap() {
   } finally {
     createMapButton.disabled = !userId;
     joinMapButton.disabled = !userId;
+    updateEditor();
+  }
+}
+
+async function handleCreateInvite() {
+  if (!selectedMapId || selectedMap()?.role !== 'owner') return;
+
+  const role = (window.prompt('Invite role: editor or viewer', 'editor') || '').trim().toLowerCase();
+  if (!role) return;
+  if (!['editor', 'viewer'].includes(role)) {
+    window.alert('Role must be "editor" or "viewer".');
+    return;
+  }
+
+  const usesText = window.prompt('Maximum uses? Leave blank for unlimited.', '1');
+  if (usesText === null) return;
+
+  const maxUses = usesText.trim() ? Number(usesText.trim()) : null;
+  if (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1)) {
+    window.alert('Maximum uses must be a positive whole number.');
+    return;
+  }
+
+  inviteMapButton.disabled = true;
+  setConnectionStatus('Creating invite…');
+
+  try {
+    const token = await createMapInvite({ mapId: selectedMapId, role, maxUses });
+    if (!token) throw new Error('Supabase returned no invite token.');
+
+    setConnectionStatus('Live', 'connected');
+    window.prompt(`Copy this ${role} invite token. It is shown only now:`, token);
+  } catch (error) {
+    console.error('[Town Red] could not create invite', error);
+    setConnectionStatus('Invite failed', 'error');
+    window.alert(`Could not create invite:\n${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    updateEditor();
   }
 }
 
@@ -410,9 +419,8 @@ async function bootstrap() {
     sharedMaps = await listSharedMaps(userId);
     renderMapOptions();
 
-    if (sharedMaps.length) {
-      await selectMap(sharedMaps[0].id);
-    } else {
+    if (sharedMaps.length) await selectMap(sharedMaps[0].id);
+    else {
       setConnectionStatus('Connected', 'connected');
       overlayStatus.textContent = 'No shared maps are available to this identity';
       updateEditor();
@@ -454,28 +462,20 @@ mapSelect.addEventListener('change', () => {
   });
 });
 
-createMapButton.addEventListener('click', () => {
-  handleCreateMap();
-});
-
-joinMapButton.addEventListener('click', () => {
-  handleJoinMap();
-});
-
+createMapButton.addEventListener('click', handleCreateMap);
+joinMapButton.addEventListener('click', handleJoinMap);
+inviteMapButton.addEventListener('click', handleCreateInvite);
 fitButton.addEventListener('click', () => renderer.fitToStrokes());
 
 function cleanup() {
   if (cleanedUp) return;
   cleanedUp = true;
-
   unsubscribeRealtime?.();
   unsubscribeRealtime = null;
-
   if (refreshTimer) {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
-
   renderer.destroy();
 }
 
