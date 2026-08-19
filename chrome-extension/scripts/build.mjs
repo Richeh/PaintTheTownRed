@@ -1,8 +1,8 @@
 import { build } from 'esbuild';
-import archiver from 'archiver';
 import sharp from 'sharp';
+import yazl from 'yazl';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,21 +137,41 @@ async function buildOnce({ production = false } = {}) {
   return manifest;
 }
 
+async function addDirectoryToZip(zipFile, directory, root = directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await addDirectoryToZip(zipFile, absolutePath, root);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const archivePath = path.relative(root, absolutePath).split(path.sep).join('/');
+    zipFile.addFile(absolutePath, archivePath, { compress: true });
+  }
+}
+
 async function packageRelease() {
   const manifest = await buildOnce({ production: true });
   await rm(releaseDir, { recursive: true, force: true });
   await mkdir(releaseDir, { recursive: true });
   const zipPath = path.join(releaseDir, `town-red-rightmove-${manifest.version}.zip`);
 
-  await new Promise((resolve, reject) => {
+  await new Promise(async (resolve, reject) => {
+    const zipFile = new yazl.ZipFile();
     const output = createWriteStream(zipPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+
     output.on('close', resolve);
     output.on('error', reject);
-    archive.on('error', reject);
-    archive.pipe(output);
-    archive.directory(distDir, false);
-    archive.finalize();
+    zipFile.outputStream.on('error', reject);
+    zipFile.outputStream.pipe(output);
+
+    try {
+      await addDirectoryToZip(zipFile, distDir);
+      zipFile.end();
+    } catch (error) {
+      reject(error);
+    }
   });
 
   console.log(`[Town Red] Web Store package: ${zipPath}`);
