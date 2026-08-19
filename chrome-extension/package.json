@@ -12,8 +12,8 @@
     "@supabase/supabase-js": "^2.57.4"
   },
   "devDependencies": {
-    "archiver": "^7.0.1",
     "esbuild": "^0.25.9",
-    "sharp": "^0.34.3"
+    "sharp": "^0.34.3",
+    "yazl": "^3.3.1"
   }
 }
