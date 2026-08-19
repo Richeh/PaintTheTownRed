@@ -17,6 +17,15 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
   },
 });
 
+async function withProfile(session) {
+  if (!session?.user?.id) return session;
+
+  // Dynamic import avoids a module cycle: profile -> data -> supabase.
+  const { ensureProfile } = await import('./profile.js');
+  await ensureProfile(session.user.id);
+  return session;
+}
+
 export async function ensureAnonymousSession() {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
@@ -25,7 +34,7 @@ export async function ensureAnonymousSession() {
   }
 
   if (sessionData.session) {
-    return sessionData.session;
+    return withProfile(sessionData.session);
   }
 
   const { data, error } = await supabase.auth.signInAnonymously();
@@ -34,5 +43,5 @@ export async function ensureAnonymousSession() {
     throw error;
   }
 
-  return data.session;
+  return withProfile(data.session);
 }
