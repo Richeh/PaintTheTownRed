@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Town Red for Rightmove",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Paint and share geographically anchored preference areas on Rightmove maps.",
   "permissions": [],
   "host_permissions": [
@@ -14,7 +14,7 @@
         "https://www.rightmove.co.uk/property-for-sale/map.html*",
         "https://www.rightmove.co.uk/properties/map.html*"
       ],
-      "js": ["content.js"],
+      "js": ["map-hook.js", "content.js"],
       "run_at": "document_start",
       "world": "MAIN"
     }
