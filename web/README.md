@@ -26,7 +26,7 @@ Never put a Supabase secret/service-role key in a Vite environment variable or b
 npm run dev
 ```
 
-Vite listens on all interfaces at port `5173` so the app can be opened from another device on the development network when required.
+Vite listens on all interfaces at port `5173`.
 
 Typical local URL:
 
@@ -36,22 +36,33 @@ http://localhost:5173
 
 The local Supabase Auth configuration in `../supabase/config.toml` allows this origin.
 
-## Map renderer
+## Current capabilities
 
-The standalone map uses MapLibre GL JS. The current basemap style is OpenFreeMap's Liberty style, which does not require an application API key.
+The standalone application now supports:
 
-Town Red's paint is rendered on a transparent canvas above MapLibre rather than being converted to ordinary map line layers. This preserves the same ordered red / blue / erase compositing model as the Rightmove prototype while still using geographic latitude/longitude points and brush widths stored in metres.
+- anonymous Supabase authentication;
+- friendly collaborator display profiles;
+- creating shared maps;
+- joining maps by token or shareable `?invite=` URL;
+- owner-created editor/viewer invitations;
+- MapLibre navigation with OpenStreetMap raster tiles;
+- red, blue and erase painting with geographic brush widths;
+- ordered stroke rendering and erase compositing;
+- Supabase Realtime updates plus periodic reconciliation;
+- per-collaborator layers with browser-local visibility preferences;
+- viewer/editor/owner permissions enforced by Supabase RLS.
 
-The frontend currently:
+Town Red's paint is rendered on a transparent canvas above MapLibre. This preserves ordered red / blue / erase compositing while strokes remain stored as geographic latitude/longitude points with brush widths in metres.
 
-- lists shared maps visible to the authenticated/anonymous Supabase identity;
-- loads strokes in their database sequence order;
-- fits MapLibre to the selected overlay;
-- reprojects paint while panning and zooming;
-- receives new strokes through Supabase Realtime;
-- performs periodic authoritative refreshes to reconcile remote deletes/undo operations.
+## Profiles and privacy
 
-MapLibre GL JS v6 requires a separate worker URL when bundled with Vite. `src/map.js` uses Vite's `?worker&url` pipeline for the packaged MapLibre worker so both development and production builds load vector tiles correctly.
+`public.profiles` stores only application-level profile data such as a display name. Authentication identity, including any future email address used to make an account persistent, remains owned by Supabase Auth rather than duplicated into the profile table.
+
+Profile RLS permits users to update only their own profile and limits display-name reads to people who share access to a Town Red map.
+
+## Database migrations
+
+See `../supabase/README.md` for the local reset, hosted-project baseline, and `db push` workflow.
 
 ## Production build
 
@@ -66,7 +77,3 @@ To inspect that bundle locally:
 ```bash
 npm run preview
 ```
-
-## Current limitation
-
-The standalone client is currently a renderer/viewer. Painting and editing from the standalone MapLibre view is the next frontend milestone; those writes will use the same Supabase stroke records as the Rightmove integration.
