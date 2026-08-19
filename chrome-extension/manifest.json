@@ -1,11 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Town Red for Rightmove",
-  "version": "0.1.1",
-  "description": "Paint and share geographically anchored preference areas on Rightmove maps.",
-  "permissions": [],
+  "version": "0.2.0",
+  "description": "Paint and share collaborative preference areas on Rightmove property maps.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "host_permissions": [
-    "https://www.rightmove.co.uk/*",
     "https://oikkiayjonjouernvjhw.supabase.co/*"
   ],
   "content_scripts": [
