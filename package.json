@@ -1,0 +1,23 @@
+{
+  "name": "paintthetownred",
+  "version": "0.3.0",
+  "description": "A collaborative mapping adventure",
+  "homepage": "https://github.com/Richeh/PaintTheTownRed#readme",
+  "bugs": {
+    "url": "https://github.com/Richeh/PaintTheTownRed/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Richeh/PaintTheTownRed.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "supabase": "^2.115.0"
+  }
+}
