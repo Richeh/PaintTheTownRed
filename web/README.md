@@ -1,6 +1,6 @@
 # Town Red web frontend
 
-The standalone Town Red client is a Vite-powered, framework-free JavaScript application.
+The standalone Town Red client is a Vite-powered, framework-free JavaScript application styled with Tailwind CSS and rendered with MapLibre GL JS.
 
 ## Requirements
 
@@ -36,6 +36,23 @@ http://localhost:5173
 
 The local Supabase Auth configuration in `../supabase/config.toml` allows this origin.
 
+## Map renderer
+
+The standalone map uses MapLibre GL JS. The current basemap style is OpenFreeMap's Liberty style, which does not require an application API key.
+
+Town Red's paint is rendered on a transparent canvas above MapLibre rather than being converted to ordinary map line layers. This preserves the same ordered red / blue / erase compositing model as the Rightmove prototype while still using geographic latitude/longitude points and brush widths stored in metres.
+
+The frontend currently:
+
+- lists shared maps visible to the authenticated/anonymous Supabase identity;
+- loads strokes in their database sequence order;
+- fits MapLibre to the selected overlay;
+- reprojects paint while panning and zooming;
+- receives new strokes through Supabase Realtime;
+- performs periodic authoritative refreshes to reconcile remote deletes/undo operations.
+
+MapLibre GL JS v6 requires a separate worker URL when bundled with Vite. `src/map.js` uses Vite's `?worker&url` pipeline for the packaged MapLibre worker so both development and production builds load vector tiles correctly.
+
 ## Production build
 
 ```bash
@@ -50,14 +67,6 @@ To inspect that bundle locally:
 npm run preview
 ```
 
-## Current scaffold
+## Current limitation
 
-The application currently provides:
-
-- a Vite development/build environment;
-- frontend Supabase configuration through environment variables;
-- persisted Supabase browser sessions;
-- automatic anonymous sign-in;
-- a minimal Town Red application shell ready for the standalone map renderer.
-
-The next frontend milestone is the standalone map plus shared-map/stroke loading.
+The standalone client is currently a renderer/viewer. Painting and editing from the standalone MapLibre view is the next frontend milestone; those writes will use the same Supabase stroke records as the Rightmove integration.
