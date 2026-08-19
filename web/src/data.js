@@ -34,6 +34,38 @@ export async function listSharedMaps(userId) {
   }));
 }
 
+export async function createSharedMap({ name, userId }) {
+  const { data, error } = await supabase
+    .from('maps')
+    .insert({
+      name: name.trim(),
+      owner_id: userId,
+    })
+    .select('id,name,owner_id,created_at')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function joinSharedMap(inviteToken) {
+  const { data, error } = await supabase.rpc('join_map_with_invite', {
+    p_token: inviteToken.trim(),
+  });
+
+  if (error) throw error;
+
+  if (Array.isArray(data)) {
+    return data[0]?.map_id || null;
+  }
+
+  if (data && typeof data === 'object') {
+    return data.map_id || null;
+  }
+
+  return typeof data === 'string' ? data : null;
+}
+
 export async function loadStrokes(mapId) {
   if (!mapId) return [];
 
