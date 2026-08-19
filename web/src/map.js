@@ -1,6 +1,7 @@
 import { Map, NavigationControl, ScaleControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { supabase } from './supabase.js';
+import { loadProfiles } from './data.js';
 
 const DEFAULT_STYLE = {
   version: 8,
@@ -79,6 +80,8 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
   let currentUserId = null;
   let activeMapId = null;
   let hiddenCreators = new Set();
+  let creatorNames = new Map();
+  let profileGeneration = 0;
   let editor = {
     enabled: false,
     mode: 'navigate',
@@ -128,8 +131,11 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
   }
 
   function creatorLabel(creatorId) {
-    if (creatorId === currentUserId) return 'You';
-    return `Collaborator ${creatorId.slice(0, 6)}`;
+    const displayName = creatorNames.get(creatorId);
+    if (creatorId === currentUserId) {
+      return displayName ? `${displayName} (You)` : 'You';
+    }
+    return displayName || `Collaborator ${creatorId.slice(0, 6)}`;
   }
 
   function renderLayerPanel() {
@@ -155,7 +161,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
       const text = document.createElement('span');
       text.className = 'min-w-0 flex-1 truncate';
       text.textContent = creatorLabel(creatorId);
-      text.title = creatorId;
+      text.title = creatorNames.get(creatorId) || creatorId;
 
       const count = document.createElement('span');
       count.className = 'text-xs tabular-nums text-stone-400';
@@ -164,6 +170,28 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
 
       label.append(checkbox, text, count);
       layerList.append(label);
+    }
+  }
+
+  async function refreshCreatorNames() {
+    const generation = ++profileGeneration;
+    const creators = creatorIds();
+
+    if (!creators.length) {
+      creatorNames = new Map();
+      renderLayerPanel();
+      return;
+    }
+
+    try {
+      const profiles = await loadProfiles(creators);
+      if (destroyed || generation !== profileGeneration) return;
+      creatorNames = new Map((profiles || []).map((profile) => [profile.user_id, profile.display_name]));
+      renderLayerPanel();
+    } catch (error) {
+      if (!destroyed) {
+        console.warn('[Town Red] could not load collaborator names', error);
+      }
     }
   }
 
@@ -306,6 +334,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
     if (nextMapId !== activeMapId) {
       activeMapId = nextMapId;
       loadLayerPreferences(activeMapId);
+      creatorNames = new Map();
     }
 
     const knownCreators = new Set(creatorIds());
@@ -313,6 +342,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
     saveLayerPreferences();
     renderLayerPanel();
     redraw();
+    refreshCreatorNames();
   }
 
   function upsertStroke(stroke) {
@@ -332,12 +362,14 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
 
     renderLayerPanel();
     redraw();
+    refreshCreatorNames();
   }
 
   function removeStroke(id) {
     strokes = strokes.filter((stroke) => stroke.id !== id);
     renderLayerPanel();
     redraw();
+    refreshCreatorNames();
   }
 
   function fitToStrokes() {
@@ -477,6 +509,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      profileGeneration += 1;
       resizeObserver.disconnect();
 
       try {
