@@ -73,6 +73,7 @@ let selectedMapId = null;
 let strokes = [];
 let unsubscribeRealtime = null;
 let refreshTimer = null;
+let cleanedUp = false;
 
 function setConnectionStatus(label, state = 'idle') {
   connectionStatus.textContent = label;
@@ -221,6 +222,21 @@ async function bootstrap() {
   }
 }
 
+function cleanup() {
+  if (cleanedUp) return;
+  cleanedUp = true;
+
+  unsubscribeRealtime?.();
+  unsubscribeRealtime = null;
+
+  if (refreshTimer) {
+    window.clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+
+  renderer.destroy();
+}
+
 mapSelect.addEventListener('change', () => {
   selectMap(mapSelect.value).catch((error) => {
     console.error('[Town Red] could not switch map', error);
@@ -229,11 +245,10 @@ mapSelect.addEventListener('change', () => {
 });
 
 fitButton.addEventListener('click', () => renderer.fitToStrokes());
+window.addEventListener('pagehide', cleanup, { once: true });
 
-window.addEventListener('beforeunload', () => {
-  unsubscribeRealtime?.();
-  if (refreshTimer) window.clearInterval(refreshTimer);
-  renderer.destroy();
-});
+if (import.meta.hot) {
+  import.meta.hot.dispose(cleanup);
+}
 
 bootstrap();
