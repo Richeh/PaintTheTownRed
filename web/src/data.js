@@ -66,6 +66,23 @@ export async function joinSharedMap(inviteToken) {
   return typeof data === 'string' ? data : null;
 }
 
+export async function createMapInvite({ mapId, role = 'editor', maxUses = 1 }) {
+  const { data, error } = await supabase.rpc('create_map_invite', {
+    p_map_id: mapId,
+    p_role: role,
+    p_max_uses: maxUses,
+    p_expires_at: null,
+  });
+
+  if (error) throw error;
+
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) return data[0]?.invite_token || data[0]?.token || null;
+  if (data && typeof data === 'object') return data.invite_token || data.token || null;
+
+  return null;
+}
+
 export async function loadStrokes(mapId) {
   if (!mapId) return [];
 
