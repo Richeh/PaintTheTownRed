@@ -1,7 +1,9 @@
 import './styles.css';
 import { ensureAnonymousSession } from './supabase.js';
 import {
+  createSharedMap,
   createStroke,
+  joinSharedMap,
   listSharedMaps,
   loadStrokes,
   subscribeToStrokeInserts,
@@ -30,6 +32,24 @@ app.innerHTML = `
               <option>Loading…</option>
             </select>
           </label>
+
+          <button
+            id="create-map"
+            type="button"
+            class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled
+          >
+            New map
+          </button>
+
+          <button
+            id="join-map"
+            type="button"
+            class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled
+          >
+            Join
+          </button>
 
           <button
             id="fit-overlay"
@@ -87,6 +107,8 @@ const identityStatus = document.querySelector('#identity-status');
 const overlayStatus = document.querySelector('#overlay-status');
 const editStatus = document.querySelector('#edit-status');
 const mapSelect = document.querySelector('#shared-map-select');
+const createMapButton = document.querySelector('#create-map');
+const joinMapButton = document.querySelector('#join-map');
 const fitButton = document.querySelector('#fit-overlay');
 const mapContainer = document.querySelector('#map-container');
 const brushSize = document.querySelector('#brush-size');
@@ -180,6 +202,18 @@ function renderMapOptions() {
     .map((map) => `<option value="${map.id}">${escapeHtml(map.name)} · ${map.role}</option>`)
     .join('');
   mapSelect.disabled = false;
+}
+
+async function refreshMapList(preferMapId = selectedMapId) {
+  sharedMaps = await listSharedMaps(userId);
+  renderMapOptions();
+
+  const target =
+    preferMapId && sharedMaps.some((map) => map.id === preferMapId)
+      ? preferMapId
+      : sharedMaps[0]?.id || null;
+
+  await selectMap(target);
 }
 
 function escapeHtml(value) {
@@ -315,12 +349,58 @@ async function selectMap(mapId, { fit = true } = {}) {
   );
 }
 
+async function handleCreateMap() {
+  const name = window.prompt('Name for the shared map:', 'House Search');
+  if (!name?.trim()) return;
+
+  createMapButton.disabled = true;
+  joinMapButton.disabled = true;
+  setConnectionStatus('Creating map…');
+
+  try {
+    const created = await createSharedMap({ name, userId });
+    await refreshMapList(created.id);
+    setConnectionStatus('Live', 'connected');
+  } catch (error) {
+    console.error('[Town Red] could not create map', error);
+    setConnectionStatus('Create failed', 'error');
+    window.alert(`Could not create map:\n${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    createMapButton.disabled = !userId;
+    joinMapButton.disabled = !userId;
+  }
+}
+
+async function handleJoinMap() {
+  const token = window.prompt('Paste the invite token:');
+  if (!token?.trim()) return;
+
+  createMapButton.disabled = true;
+  joinMapButton.disabled = true;
+  setConnectionStatus('Joining map…');
+
+  try {
+    const joinedMapId = await joinSharedMap(token);
+    await refreshMapList(joinedMapId);
+    setConnectionStatus('Live', 'connected');
+  } catch (error) {
+    console.error('[Town Red] could not join map', error);
+    setConnectionStatus('Join failed', 'error');
+    window.alert(`Could not join map:\n${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    createMapButton.disabled = !userId;
+    joinMapButton.disabled = !userId;
+  }
+}
+
 async function bootstrap() {
   try {
     setConnectionStatus('Authenticating…');
 
     const session = await ensureAnonymousSession();
     userId = session?.user?.id;
+    createMapButton.disabled = !userId;
+    joinMapButton.disabled = !userId;
 
     identityStatus.textContent = userId
       ? `Anonymous session ${userId.slice(0, 8)}…`
@@ -372,6 +452,14 @@ mapSelect.addEventListener('change', () => {
     console.error('[Town Red] could not switch map', error);
     setConnectionStatus('Map load error', 'error');
   });
+});
+
+createMapButton.addEventListener('click', () => {
+  handleCreateMap();
+});
+
+joinMapButton.addEventListener('click', () => {
+  handleJoinMap();
 });
 
 fitButton.addEventListener('click', () => renderer.fitToStrokes());
