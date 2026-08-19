@@ -13,6 +13,10 @@ import { createTownRedMap } from './map.js';
 
 const app = document.querySelector('#app');
 
+const buttonClass = 'rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50';
+const primaryButtonClass = 'rounded-lg border border-red-800 bg-red-800 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-900 disabled:cursor-not-allowed disabled:opacity-50';
+const inputClass = 'mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-red-700 focus:ring-2 focus:ring-red-100';
+
 app.innerHTML = `
   <main class="grid min-h-screen grid-rows-[auto_1fr_auto] bg-stone-50 text-stone-900">
     <header class="flex flex-col gap-3 border-b border-stone-200 bg-white/90 px-4 py-4 backdrop-blur sm:px-5">
@@ -25,31 +29,15 @@ app.innerHTML = `
         <div class="flex flex-wrap items-center gap-2">
           <label class="flex items-center gap-2 text-sm font-medium text-stone-700" for="shared-map-select">
             Map
-            <select
-              id="shared-map-select"
-              class="max-w-64 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-100"
-              disabled
-            >
+            <select id="shared-map-select" class="max-w-64 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-red-700 focus:ring-2 focus:ring-red-100" disabled>
               <option>Loading…</option>
             </select>
           </label>
 
-          <button id="create-map" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
-            New map
-          </button>
-
-          <button id="join-map" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
-            Join
-          </button>
-
-          <button id="invite-map" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
-            Invite
-          </button>
-
-          <button id="fit-overlay" type="button" class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50" disabled>
-            Fit overlay
-          </button>
-
+          <button id="create-map" type="button" class="${buttonClass}" disabled>New map</button>
+          <button id="join-map" type="button" class="${buttonClass}" disabled>Join</button>
+          <button id="invite-map" type="button" class="${buttonClass}" disabled>Invite</button>
+          <button id="fit-overlay" type="button" class="${buttonClass}" disabled>Fit overlay</button>
           <span id="connection-status" class="shrink-0 rounded-full border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs font-semibold text-stone-600">Starting…</span>
         </div>
       </div>
@@ -87,6 +75,91 @@ app.innerHTML = `
       <span id="overlay-status">No overlay loaded</span>
     </footer>
   </main>
+
+  <dialog id="create-map-dialog" class="m-auto w-[min(28rem,calc(100%-2rem))] rounded-2xl border border-stone-200 bg-white p-0 text-stone-900 shadow-xl backdrop:bg-stone-950/40">
+    <form id="create-map-form" class="p-5">
+      <h2 class="m-0 text-lg font-semibold">Create a map</h2>
+      <p class="mt-1 text-sm text-stone-600">Create a new shared Town Red overlay.</p>
+      <label class="mt-4 block text-sm font-medium text-stone-700" for="create-map-name">
+        Map name
+        <input id="create-map-name" class="${inputClass}" type="text" value="House Search" maxlength="120" required />
+      </label>
+      <p id="create-map-error" class="mt-3 hidden text-sm text-red-700" aria-live="polite"></p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" data-close-dialog="create-map-dialog" class="${buttonClass}">Cancel</button>
+        <button id="create-map-submit" type="submit" class="${primaryButtonClass}">Create map</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="join-map-dialog" class="m-auto w-[min(32rem,calc(100%-2rem))] rounded-2xl border border-stone-200 bg-white p-0 text-stone-900 shadow-xl backdrop:bg-stone-950/40">
+    <form id="join-map-form" class="p-5">
+      <h2 class="m-0 text-lg font-semibold">Join a map</h2>
+      <p class="mt-1 text-sm text-stone-600">Paste either a Town Red invite token or a full invite link.</p>
+      <label class="mt-4 block text-sm font-medium text-stone-700" for="join-map-token">
+        Invite
+        <input id="join-map-token" class="${inputClass}" type="text" autocomplete="off" required />
+      </label>
+      <p id="join-map-error" class="mt-3 hidden text-sm text-red-700" aria-live="polite"></p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" data-close-dialog="join-map-dialog" class="${buttonClass}">Cancel</button>
+        <button id="join-map-submit" type="submit" class="${primaryButtonClass}">Join map</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="invite-map-dialog" class="m-auto w-[min(32rem,calc(100%-2rem))] rounded-2xl border border-stone-200 bg-white p-0 text-stone-900 shadow-xl backdrop:bg-stone-950/40">
+    <form id="invite-map-form" class="p-5">
+      <h2 class="m-0 text-lg font-semibold">Invite collaborators</h2>
+      <p id="invite-map-description" class="mt-1 text-sm text-stone-600">Create a share link for this map.</p>
+
+      <div id="invite-settings">
+        <label class="mt-4 block text-sm font-medium text-stone-700" for="invite-role">
+          Access
+          <select id="invite-role" class="${inputClass}">
+            <option value="editor">Editor — can paint</option>
+            <option value="viewer">Viewer — view only</option>
+          </select>
+        </label>
+
+        <label class="mt-4 block text-sm font-medium text-stone-700" for="invite-max-uses">
+          Maximum uses
+          <input id="invite-max-uses" class="${inputClass}" type="number" min="1" step="1" value="1" placeholder="Leave blank for unlimited" />
+          <span class="mt-1 block text-xs font-normal text-stone-500">Leave blank for an unlimited-use link.</span>
+        </label>
+      </div>
+
+      <div id="invite-result" class="mt-4 hidden">
+        <label class="block text-sm font-medium text-stone-700" for="invite-link">Invite link</label>
+        <div class="mt-1 flex gap-2">
+          <input id="invite-link" class="min-w-0 flex-1 rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-sm text-stone-700" type="text" readonly />
+          <button id="copy-invite-link" type="button" class="${buttonClass}">Copy</button>
+        </div>
+        <details class="mt-3 text-sm text-stone-600">
+          <summary class="cursor-pointer select-none">Show raw token</summary>
+          <code id="invite-token" class="mt-2 block break-all rounded-lg bg-stone-100 p-3 text-xs text-stone-700"></code>
+        </details>
+      </div>
+
+      <p id="invite-map-error" class="mt-3 hidden text-sm text-red-700" aria-live="polite"></p>
+      <p id="invite-copy-status" class="mt-3 hidden text-sm text-emerald-700" aria-live="polite"></p>
+
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" data-close-dialog="invite-map-dialog" class="${buttonClass}">Close</button>
+        <button id="invite-map-submit" type="submit" class="${primaryButtonClass}">Create invite</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="message-dialog" class="m-auto w-[min(28rem,calc(100%-2rem))] rounded-2xl border border-stone-200 bg-white p-0 text-stone-900 shadow-xl backdrop:bg-stone-950/40">
+    <div class="p-5">
+      <h2 id="message-dialog-title" class="m-0 text-lg font-semibold">Town Red</h2>
+      <p id="message-dialog-body" class="mt-3 whitespace-pre-wrap text-sm text-stone-600"></p>
+      <div class="mt-5 flex justify-end">
+        <button type="button" data-close-dialog="message-dialog" class="${primaryButtonClass}">OK</button>
+      </div>
+    </div>
+  </dialog>
 `;
 
 const connectionStatus = document.querySelector('#connection-status');
@@ -104,6 +177,36 @@ const brushSizeValue = document.querySelector('#brush-size-value');
 const opacityInput = document.querySelector('#paint-opacity');
 const opacityValue = document.querySelector('#opacity-value');
 const modeButtons = [...document.querySelectorAll('.paint-mode')];
+
+const createMapDialog = document.querySelector('#create-map-dialog');
+const createMapForm = document.querySelector('#create-map-form');
+const createMapName = document.querySelector('#create-map-name');
+const createMapError = document.querySelector('#create-map-error');
+const createMapSubmit = document.querySelector('#create-map-submit');
+
+const joinMapDialog = document.querySelector('#join-map-dialog');
+const joinMapForm = document.querySelector('#join-map-form');
+const joinMapToken = document.querySelector('#join-map-token');
+const joinMapError = document.querySelector('#join-map-error');
+const joinMapSubmit = document.querySelector('#join-map-submit');
+
+const inviteMapDialog = document.querySelector('#invite-map-dialog');
+const inviteMapForm = document.querySelector('#invite-map-form');
+const inviteMapDescription = document.querySelector('#invite-map-description');
+const inviteSettings = document.querySelector('#invite-settings');
+const inviteRole = document.querySelector('#invite-role');
+const inviteMaxUses = document.querySelector('#invite-max-uses');
+const inviteResult = document.querySelector('#invite-result');
+const inviteLink = document.querySelector('#invite-link');
+const inviteToken = document.querySelector('#invite-token');
+const copyInviteLinkButton = document.querySelector('#copy-invite-link');
+const inviteMapError = document.querySelector('#invite-map-error');
+const inviteCopyStatus = document.querySelector('#invite-copy-status');
+const inviteMapSubmit = document.querySelector('#invite-map-submit');
+
+const messageDialog = document.querySelector('#message-dialog');
+const messageDialogTitle = document.querySelector('#message-dialog-title');
+const messageDialogBody = document.querySelector('#message-dialog-body');
 
 let userId = null;
 let sharedMaps = [];
@@ -129,6 +232,26 @@ function selectedMap() {
 
 function canEdit() {
   return ['owner', 'editor'].includes(selectedMap()?.role);
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function showInlineError(element, error) {
+  element.textContent = errorMessage(error);
+  element.classList.remove('hidden');
+}
+
+function clearInlineMessage(element) {
+  element.textContent = '';
+  element.classList.add('hidden');
+}
+
+function showMessage(title, body) {
+  messageDialogTitle.textContent = title;
+  messageDialogBody.textContent = body;
+  if (!messageDialog.open) messageDialog.showModal();
 }
 
 function setConnectionStatus(label, state = 'idle') {
@@ -271,6 +394,7 @@ async function saveDrawnStroke(stroke) {
     updateOverlayStatus();
     console.error('[Town Red] could not save stroke', error);
     setConnectionStatus('Save failed', 'error');
+    showMessage('Could not save stroke', errorMessage(error));
   }
 }
 
@@ -319,88 +443,197 @@ async function selectMap(mapId, { fit = true } = {}) {
   );
 }
 
-async function handleCreateMap() {
-  const name = window.prompt('Name for the shared map:', 'House Search');
-  if (!name?.trim()) return;
+function extractInviteToken(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
 
-  createMapButton.disabled = true;
-  joinMapButton.disabled = true;
+  try {
+    const url = new URL(trimmed);
+    return url.searchParams.get('invite')?.trim() || trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
+function inviteUrlForToken(token) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('invite', token);
+  return url.toString();
+}
+
+function inviteTokenFromCurrentUrl() {
+  return new URL(window.location.href).searchParams.get('invite')?.trim() || '';
+}
+
+function clearInviteFromCurrentUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('invite')) return;
+  url.searchParams.delete('invite');
+  window.history.replaceState({}, '', url);
+}
+
+async function redeemInvite(token, { automatic = false } = {}) {
+  const cleanToken = extractInviteToken(token);
+  if (!cleanToken) throw new Error('No invite token was supplied.');
+
+  setConnectionStatus('Joining map…');
+  const joinedMapId = await joinSharedMap(cleanToken);
+  await refreshMapList(joinedMapId);
+  setConnectionStatus('Live', 'connected');
+
+  if (automatic) clearInviteFromCurrentUrl();
+  return joinedMapId;
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('The browser could not copy the invite link.');
+}
+
+function openCreateMapDialog() {
+  clearInlineMessage(createMapError);
+  createMapName.value = 'House Search';
+  createMapDialog.showModal();
+  requestAnimationFrame(() => createMapName.select());
+}
+
+function openJoinMapDialog(initialValue = '') {
+  clearInlineMessage(joinMapError);
+  joinMapToken.value = initialValue;
+  joinMapDialog.showModal();
+  requestAnimationFrame(() => joinMapToken.focus());
+}
+
+function openInviteDialog() {
+  if (!selectedMapId || selectedMap()?.role !== 'owner') return;
+
+  clearInlineMessage(inviteMapError);
+  clearInlineMessage(inviteCopyStatus);
+  inviteSettings.classList.remove('hidden');
+  inviteResult.classList.add('hidden');
+  inviteMapSubmit.classList.remove('hidden');
+  inviteMapSubmit.disabled = false;
+  inviteRole.value = 'editor';
+  inviteMaxUses.value = '1';
+  inviteLink.value = '';
+  inviteToken.textContent = '';
+  inviteMapDescription.textContent = `Create a share link for “${selectedMap()?.name || 'this map'}”.`;
+  inviteMapDialog.showModal();
+}
+
+createMapForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearInlineMessage(createMapError);
+  const name = createMapName.value.trim();
+  if (!name) return;
+
+  createMapSubmit.disabled = true;
   setConnectionStatus('Creating map…');
 
   try {
     const created = await createSharedMap({ name, userId });
     await refreshMapList(created.id);
     setConnectionStatus('Live', 'connected');
+    createMapDialog.close();
   } catch (error) {
     console.error('[Town Red] could not create map', error);
     setConnectionStatus('Create failed', 'error');
-    window.alert(`Could not create map:\n${error instanceof Error ? error.message : String(error)}`);
+    showInlineError(createMapError, error);
   } finally {
-    createMapButton.disabled = !userId;
-    joinMapButton.disabled = !userId;
+    createMapSubmit.disabled = false;
     updateEditor();
   }
-}
+});
 
-async function handleJoinMap() {
-  const token = window.prompt('Paste the invite token:');
-  if (!token?.trim()) return;
+joinMapForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearInlineMessage(joinMapError);
 
-  createMapButton.disabled = true;
-  joinMapButton.disabled = true;
-  setConnectionStatus('Joining map…');
-
+  joinMapSubmit.disabled = true;
   try {
-    const joinedMapId = await joinSharedMap(token);
-    await refreshMapList(joinedMapId);
-    setConnectionStatus('Live', 'connected');
+    await redeemInvite(joinMapToken.value);
+    joinMapDialog.close();
   } catch (error) {
     console.error('[Town Red] could not join map', error);
     setConnectionStatus('Join failed', 'error');
-    window.alert(`Could not join map:\n${error instanceof Error ? error.message : String(error)}`);
+    showInlineError(joinMapError, error);
   } finally {
-    createMapButton.disabled = !userId;
-    joinMapButton.disabled = !userId;
+    joinMapSubmit.disabled = false;
     updateEditor();
   }
-}
+});
 
-async function handleCreateInvite() {
+inviteMapForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
   if (!selectedMapId || selectedMap()?.role !== 'owner') return;
 
-  const role = (window.prompt('Invite role: editor or viewer', 'editor') || '').trim().toLowerCase();
-  if (!role) return;
-  if (!['editor', 'viewer'].includes(role)) {
-    window.alert('Role must be "editor" or "viewer".');
-    return;
-  }
+  clearInlineMessage(inviteMapError);
+  clearInlineMessage(inviteCopyStatus);
 
-  const usesText = window.prompt('Maximum uses? Leave blank for unlimited.', '1');
-  if (usesText === null) return;
-
-  const maxUses = usesText.trim() ? Number(usesText.trim()) : null;
+  const usesText = inviteMaxUses.value.trim();
+  const maxUses = usesText ? Number(usesText) : null;
   if (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1)) {
-    window.alert('Maximum uses must be a positive whole number.');
+    showInlineError(inviteMapError, 'Maximum uses must be a positive whole number, or left blank.');
     return;
   }
 
-  inviteMapButton.disabled = true;
+  inviteMapSubmit.disabled = true;
   setConnectionStatus('Creating invite…');
 
   try {
-    const token = await createMapInvite({ mapId: selectedMapId, role, maxUses });
-    if (!token) throw new Error('Supabase returned no invite token.');
+    const token = await createMapInvite({
+      mapId: selectedMapId,
+      role: inviteRole.value,
+      maxUses,
+    });
 
+    if (!token) throw new Error('Supabase created the invite but did not return a token.');
+
+    const link = inviteUrlForToken(token);
+    inviteLink.value = link;
+    inviteToken.textContent = token;
+    inviteSettings.classList.add('hidden');
+    inviteResult.classList.remove('hidden');
+    inviteMapSubmit.classList.add('hidden');
     setConnectionStatus('Live', 'connected');
-    window.prompt(`Copy this ${role} invite token. It is shown only now:`, token);
   } catch (error) {
     console.error('[Town Red] could not create invite', error);
     setConnectionStatus('Invite failed', 'error');
-    window.alert(`Could not create invite:\n${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    updateEditor();
+    showInlineError(inviteMapError, error);
+    inviteMapSubmit.disabled = false;
   }
-}
+});
+
+copyInviteLinkButton.addEventListener('click', async () => {
+  clearInlineMessage(inviteMapError);
+  clearInlineMessage(inviteCopyStatus);
+
+  try {
+    await copyText(inviteLink.value);
+    inviteCopyStatus.textContent = 'Invite link copied.';
+    inviteCopyStatus.classList.remove('hidden');
+    copyInviteLinkButton.textContent = 'Copied';
+    window.setTimeout(() => {
+      copyInviteLinkButton.textContent = 'Copy';
+    }, 1400);
+  } catch (error) {
+    showInlineError(inviteMapError, error);
+  }
+});
 
 async function bootstrap() {
   try {
@@ -415,15 +648,29 @@ async function bootstrap() {
       ? `Anonymous session ${userId.slice(0, 8)}…`
       : 'Anonymous session established';
 
-    setConnectionStatus('Loading maps…');
-    sharedMaps = await listSharedMaps(userId);
-    renderMapOptions();
+    const startupInvite = inviteTokenFromCurrentUrl();
+    if (startupInvite) {
+      try {
+        await redeemInvite(startupInvite, { automatic: true });
+      } catch (error) {
+        console.error('[Town Red] automatic invite redemption failed', error);
+        clearInviteFromCurrentUrl();
+        showMessage('Could not join map', errorMessage(error));
+      }
+    }
 
-    if (sharedMaps.length) await selectMap(sharedMaps[0].id);
-    else {
-      setConnectionStatus('Connected', 'connected');
-      overlayStatus.textContent = 'No shared maps are available to this identity';
-      updateEditor();
+    if (!sharedMaps.length) {
+      setConnectionStatus('Loading maps…');
+      sharedMaps = await listSharedMaps(userId);
+      renderMapOptions();
+
+      if (sharedMaps.length) {
+        await selectMap(sharedMaps[0].id);
+      } else {
+        setConnectionStatus('Connected', 'connected');
+        overlayStatus.textContent = 'No shared maps are available to this identity';
+        updateEditor();
+      }
     }
 
     refreshTimer = window.setInterval(() => {
@@ -434,7 +681,7 @@ async function bootstrap() {
   } catch (error) {
     console.error('[Town Red] bootstrap failed', error);
     setConnectionStatus('Connection error', 'error');
-    identityStatus.textContent = error instanceof Error ? error.message : String(error);
+    identityStatus.textContent = errorMessage(error);
   }
 }
 
@@ -459,23 +706,39 @@ mapSelect.addEventListener('change', () => {
   selectMap(mapSelect.value).catch((error) => {
     console.error('[Town Red] could not switch map', error);
     setConnectionStatus('Map load error', 'error');
+    showMessage('Could not load map', errorMessage(error));
   });
 });
 
-createMapButton.addEventListener('click', handleCreateMap);
-joinMapButton.addEventListener('click', handleJoinMap);
-inviteMapButton.addEventListener('click', handleCreateInvite);
+createMapButton.addEventListener('click', openCreateMapDialog);
+joinMapButton.addEventListener('click', () => openJoinMapDialog());
+inviteMapButton.addEventListener('click', openInviteDialog);
 fitButton.addEventListener('click', () => renderer.fitToStrokes());
+
+document.querySelectorAll('[data-close-dialog]').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.getElementById(button.dataset.closeDialog)?.close();
+  });
+});
+
+for (const dialog of document.querySelectorAll('dialog')) {
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+}
 
 function cleanup() {
   if (cleanedUp) return;
   cleanedUp = true;
+
   unsubscribeRealtime?.();
   unsubscribeRealtime = null;
+
   if (refreshTimer) {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
+
   renderer.destroy();
 }
 
