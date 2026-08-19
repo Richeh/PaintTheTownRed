@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Town Red - Rightmove
 // @namespace    https://github.com/Richeh/PaintTheTownRed
-// @version      0.3.1
+// @version      0.3.2
 // @description  Paint and share geographically anchored preference areas on Rightmove maps.
 // @match        https://www.rightmove.co.uk/property-for-sale/map.html*
 // @match        https://www.rightmove.co.uk/properties/map.html*
@@ -24,7 +24,6 @@
   const CACHE_PREFIX = 'town-red-rightmove-v03-cache:';
   const DEFAULTS = { mode: 'navigate', brushSize: 42, opacity: 0.20 };
 
-  // Capture the Google Map instance Rightmove creates.
   PAGE.__townRedMaps ||= [];
 
   function rememberMap(map) {
@@ -310,9 +309,9 @@
         return;
       }
 
-      const result = await sb.from('map_members').select('role').eq('map_id', mapId).eq('user_id', userId).maybeSingle();
+      const result = await sb.rpc('get_my_map_role', { p_map_id: mapId });
       if (result.error) throw result.error;
-      selectedRole = result.data?.role || 'viewer';
+      selectedRole = result.data || 'viewer';
       updateControls();
     }
 
@@ -331,7 +330,11 @@
       setSync('joining…');
       const result = await sb.rpc('join_map_with_invite', { p_token: token.trim() });
       if (result.error) throw result.error;
-      const joinedId = result.data?.[0]?.map_id;
+      const joinedId = typeof result.data === 'string'
+        ? result.data
+        : Array.isArray(result.data)
+          ? result.data[0]?.map_id
+          : result.data?.map_id;
       await refreshMaps(joinedId);
     }
 
@@ -361,7 +364,6 @@
       });
       if (result.error) throw result.error;
 
-      // Supports both the original deployed RPC (table result) and the repo migration (text result).
       const token = typeof result.data === 'string' ? result.data : result.data?.[0]?.invite_token;
       if (!token) throw new Error('Supabase returned no invite token.');
       setSync('connected');
@@ -747,7 +749,6 @@
     window.addEventListener('resize', () => { updateCanvasBounds(); redraw(); });
     window.addEventListener('scroll', () => { updateCanvasBounds(); redraw(); }, true);
 
-    // Reconcile deletes / missed events periodically. Inserts arrive through Realtime.
     setInterval(async () => {
       if (!selectedMapId) return;
       try {
@@ -770,6 +771,6 @@
       }
     })();
 
-    console.info('[Town Red] Rightmove shared geographic client v0.3.1 loaded');
+    console.info('[Town Red] Rightmove shared geographic client v0.3.2 loaded');
   }
 })();
