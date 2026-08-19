@@ -37,10 +37,7 @@ export async function listSharedMaps(userId) {
 export async function createSharedMap({ name, userId }) {
   const { data, error } = await supabase
     .from('maps')
-    .insert({
-      name: name.trim(),
-      owner_id: userId,
-    })
+    .insert({ name: name.trim(), owner_id: userId })
     .select('id,name,owner_id,created_at')
     .single();
 
@@ -54,15 +51,8 @@ export async function joinSharedMap(inviteToken) {
   });
 
   if (error) throw error;
-
-  if (Array.isArray(data)) {
-    return data[0]?.map_id || null;
-  }
-
-  if (data && typeof data === 'object') {
-    return data.map_id || null;
-  }
-
+  if (Array.isArray(data)) return data[0]?.map_id || null;
+  if (data && typeof data === 'object') return data.map_id || null;
   return typeof data === 'string' ? data : null;
 }
 
@@ -75,23 +65,19 @@ export async function createMapInvite({ mapId, role = 'editor', maxUses = 1 }) {
   });
 
   if (error) throw error;
-
   if (typeof data === 'string') return data;
   if (Array.isArray(data)) return data[0]?.invite_token || data[0]?.token || null;
   if (data && typeof data === 'object') return data.invite_token || data.token || null;
-
   return null;
 }
 
 export async function getProfile(userId) {
   if (!userId) return null;
-
   const { data, error } = await supabase
     .from('profiles')
     .select('user_id,display_name,created_at,updated_at')
     .eq('user_id', userId)
     .maybeSingle();
-
   if (error) throw error;
   return data || null;
 }
@@ -99,16 +85,9 @@ export async function getProfile(userId) {
 export async function saveProfile({ userId, displayName }) {
   const { data, error } = await supabase
     .from('profiles')
-    .upsert(
-      {
-        user_id: userId,
-        display_name: displayName.trim(),
-      },
-      { onConflict: 'user_id' },
-    )
+    .upsert({ user_id: userId, display_name: displayName.trim() }, { onConflict: 'user_id' })
     .select('user_id,display_name,created_at,updated_at')
     .single();
-
   if (error) throw error;
   return data;
 }
@@ -116,75 +95,85 @@ export async function saveProfile({ userId, displayName }) {
 export async function loadProfiles(userIds) {
   const ids = [...new Set((userIds || []).filter(Boolean))];
   if (!ids.length) return [];
-
   const { data, error } = await supabase
     .from('profiles')
     .select('user_id,display_name')
     .in('user_id', ids);
-
   if (error) throw error;
   return data || [];
 }
 
 export async function loadStrokes(mapId) {
   if (!mapId) return [];
-
   const { data, error } = await supabase
     .from('strokes')
     .select('id,sequence,map_id,created_by,mode,brush_metres,opacity,points,created_at')
     .eq('map_id', mapId)
     .order('sequence', { ascending: true });
-
   if (error) throw error;
-
   return data || [];
 }
 
 export async function createStroke({ mapId, userId, mode, brushMetres, opacity, points, id }) {
-  const row = {
-    id,
-    map_id: mapId,
-    created_by: userId,
-    mode,
-    brush_metres: brushMetres,
-    opacity,
-    points,
-  };
-
   const { data, error } = await supabase
     .from('strokes')
-    .insert(row)
+    .insert({ id, map_id: mapId, created_by: userId, mode, brush_metres: brushMetres, opacity, points })
     .select('id,sequence,map_id,created_by,mode,brush_metres,opacity,points,created_at')
     .single();
-
   if (error) throw error;
   return data;
 }
 
-export async function subscribeToStrokeInserts(mapId, onInsert, onStatus) {
+export async function loadMarkers(mapId) {
+  if (!mapId) return [];
+  const { data, error } = await supabase
+    .from('markers')
+    .select('id,map_id,created_by,kind,label,longitude,latitude,created_at,updated_at')
+    .eq('map_id', mapId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createMarker({ mapId, userId, kind, label, longitude, latitude }) {
+  const { data, error } = await supabase
+    .from('markers')
+    .insert({
+      map_id: mapId,
+      created_by: userId,
+      kind,
+      label: label.trim(),
+      longitude,
+      latitude,
+    })
+    .select('id,map_id,created_by,kind,label,longitude,latitude,created_at,updated_at')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function setRealtimeAuth() {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
   if (sessionError) throw sessionError;
-
   if (sessionData.session?.access_token) {
     await supabase.realtime.setAuth(sessionData.session.access_token);
   }
+}
 
+export async function subscribeToStrokeInserts(mapId, onInsert, onStatus) {
+  await setRealtimeAuth();
   const channel = supabase
     .channel(`town-red-web-strokes-${mapId}-${Date.now()}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'strokes',
-        filter: `map_id=eq.${mapId}`,
-      },
-      (payload) => onInsert?.(payload.new),
-    )
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'strokes', filter: `map_id=eq.${mapId}` }, (payload) => onInsert?.(payload.new))
     .subscribe((status, error) => onStatus?.(status, error));
+  return () => { supabase.removeChannel(channel); };
+}
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
+export async function subscribeToMarkerChanges(mapId, onChange, onStatus) {
+  await setRealtimeAuth();
+  const channel = supabase
+    .channel(`town-red-web-markers-${mapId}-${Date.now()}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'markers', filter: `map_id=eq.${mapId}` }, (payload) => onChange?.(payload))
+    .subscribe((status, error) => onStatus?.(status, error));
+  return () => { supabase.removeChannel(channel); };
 }
