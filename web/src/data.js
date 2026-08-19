@@ -48,6 +48,27 @@ export async function loadStrokes(mapId) {
   return data || [];
 }
 
+export async function createStroke({ mapId, userId, mode, brushMetres, opacity, points, id }) {
+  const row = {
+    id,
+    map_id: mapId,
+    created_by: userId,
+    mode,
+    brush_metres: brushMetres,
+    opacity,
+    points,
+  };
+
+  const { data, error } = await supabase
+    .from('strokes')
+    .insert(row)
+    .select('id,sequence,map_id,created_by,mode,brush_metres,opacity,points,created_at')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function subscribeToStrokeInserts(mapId, onInsert, onStatus) {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
