@@ -1,4 +1,4 @@
-import { Map, NavigationControl, ScaleControl } from 'maplibre-gl';
+import { Map as MapLibreMap, NavigationControl, ScaleControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { supabase } from './supabase.js';
 import { loadProfiles } from './data.js';
@@ -59,7 +59,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
   shell.append(mapElement, canvas, layerPanel);
   container.replaceChildren(shell);
 
-  const map = new Map({
+  const map = new MapLibreMap({
     container: mapElement,
     style: DEFAULT_STYLE,
     center: DEFAULT_CENTER,
