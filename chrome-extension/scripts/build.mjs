@@ -67,6 +67,14 @@ function replaceRequired(source, needle, replacement, label) {
   return source.replace(needle, replacement);
 }
 
+function replaceRegexRequired(source, regex, replacement, label) {
+  if (!regex.test(source)) {
+    throw new Error(`[Town Red] Extension build transform failed: missing ${label}`);
+  }
+  regex.lastIndex = 0;
+  return source.replace(regex, replacement);
+}
+
 function transformUserscript(source, version, listingMarkerFunctions) {
   const withoutHeader = source.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, '');
   let transformed = storageShim + '\n' + withoutHeader;
@@ -75,10 +83,10 @@ function transformUserscript(source, version, listingMarkerFunctions) {
   transformed = replaceRequired(transformed, "const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;', 'Supabase bridge');
   transformed = transformed.replace(/Rightmove shared geographic client v[\d.]+ loaded/, `Rightmove Chrome extension client v${version} loaded`);
 
-  transformed = replaceRequired(
+  transformed = replaceRegexRequired(
     transformed,
-    '    let strokes = [];\n'.replace('\\n', '\n'),
-    `    let strokes = [];\n${listingMarkerState}`.replace('\\n', '\n'),
+    /(^[ \t]*let strokes = \[\];[ \t]*)(\r?\n)/m,
+    `$1$2${listingMarkerState}`,
     'marker state anchor'
   );
   transformed = replaceRequired(
@@ -90,31 +98,31 @@ function transformUserscript(source, version, listingMarkerFunctions) {
   transformed = replaceRequired(
     transformed,
     '    function sortStrokes() {',
-    `${listingMarkerFunctions}\n    function sortStrokes() {`.replace('\\n', '\n'),
+    `${listingMarkerFunctions}\n    function sortStrokes() {`,
     'listing marker functions'
   );
-  transformed = replaceRequired(
+  transformed = replaceRegexRequired(
     transformed,
-    '      strokes = [];\n      currentStroke = null;\n'.replaceAll('\\n', '\n'),
-    '      strokes = [];\n      markers = [];\n      currentStroke = null;\n      renderTownRedMarkers();\n'.replaceAll('\\n', '\n'),
+    /(^[ \t]*strokes = \[\];[ \t]*\r?\n)([ \t]*currentStroke = null;)/m,
+    `$1      markers = [];\n      renderTownRedMarkers();\n$2`,
     'map selection marker reset'
   );
-  transformed = replaceRequired(
+  transformed = replaceRegexRequired(
     transformed,
-    '      await loadRemoteStrokes();\n      await subscribeRealtime();'.replace('\\n', '\n'),
-    '      await loadRemoteStrokes();\n      await loadRemoteMarkers();\n      await subscribeRealtime();'.replaceAll('\\n', '\n'),
+    /(^[ \t]*await loadRemoteStrokes\(\);[ \t]*\r?\n)([ \t]*await subscribeRealtime\(\);)/m,
+    `$1      await loadRemoteMarkers();\n$2`,
     'marker initial load'
   );
-  transformed = replaceRequired(
+  transformed = replaceRegexRequired(
     transformed,
-    "        }, payload => {\n          console.info('[Town Red] realtime INSERT', payload);\n          if (selectedMapId === subscribedMapId) mergeStroke(payload.new);\n        })\n        .subscribe((status, error) => {".replaceAll('\\n', '\n'),
-    "        }, payload => {\n          console.info('[Town Red] realtime INSERT', payload);\n          if (selectedMapId === subscribedMapId) mergeStroke(payload.new);\n        })\n        .on('postgres_changes', { event: '*', schema: 'public', table: 'markers', filter: `map_id=eq.${subscribedMapId}` }, payload => {\n          if (selectedMapId !== subscribedMapId) return;\n          if (payload.eventType === 'DELETE') { markers = markers.filter(item => item.id !== payload.old?.id); updateCount(); renderTownRedMarkers(); } else mergeMarker(payload.new);\n        })\n        .subscribe((status, error) => {".replaceAll('\\n', '\n'),
+    /(\.on\('postgres_changes', \{\s*event: 'INSERT', schema: 'public', table: 'strokes', filter: `map_id=eq\.\$\{subscribedMapId\}`\s*\}, payload => \{[\s\S]*?if \(selectedMapId === subscribedMapId\) mergeStroke\(payload\.new\);\s*\}\)\s*)(\.subscribe\(\(status, error\) => \{)/m,
+    `$1.on('postgres_changes', { event: '*', schema: 'public', table: 'markers', filter: \`map_id=eq.\${subscribedMapId}\` }, payload => {\n          if (selectedMapId !== subscribedMapId) return;\n          if (payload.eventType === 'DELETE') { markers = markers.filter(item => item.id !== payload.old?.id); updateCount(); renderTownRedMarkers(); } else mergeMarker(payload.new);\n        })\n        $2`,
     'marker realtime subscription'
   );
-  transformed = replaceRequired(
+  transformed = replaceRegexRequired(
     transformed,
-    '      if (currentStroke) drawStroke(currentStroke);\n    }'.replace('\\n', '\n'),
-    '      if (currentStroke) drawStroke(currentStroke);\n      renderTownRedMarkers();\n    }'.replaceAll('\\n', '\n'),
+    /(^[ \t]*if \(currentStroke\) drawStroke\(currentStroke\);[ \t]*\r?\n)([ \t]*\})/m,
+    `$1      renderTownRedMarkers();\n$2`,
     'marker redraw hook'
   );
   transformed = replaceRequired(
@@ -126,13 +134,13 @@ function transformUserscript(source, version, listingMarkerFunctions) {
   transformed = replaceRequired(
     transformed,
     "    document.addEventListener('keydown', event => {",
-    "    document.addEventListener('click', event => captureRightmoveProperty(event), true);\n\n    document.addEventListener('keydown', event => {".replaceAll('\\n', '\n'),
+    "    document.addEventListener('click', event => captureRightmoveProperty(event), true);\n\n    document.addEventListener('keydown', event => {",
     'property capture listener'
   );
-  transformed = replaceRequired(
+  transformed = replaceRegexRequired(
     transformed,
-    "        await loadRemoteStrokes();\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes');".replace('\\n', '\n'),
-    "        await Promise.all([loadRemoteStrokes(), loadRemoteMarkers()]);\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes', markers.length, 'points');".replace('\\n', '\n'),
+    /(^[ \t]*await loadRemoteStrokes\(\);[ \t]*\r?\n)([ \t]*console\.info\('\[Town Red\] periodic sync complete:', strokes\.length, 'strokes'\);)/m,
+    `        await Promise.all([loadRemoteStrokes(), loadRemoteMarkers()]);\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes', markers.length, 'points');`,
     'marker periodic sync'
   );
 
