@@ -60,25 +60,80 @@ const listingMarkerState = String.raw`
     document.documentElement.appendChild(markerLayer);
 `;
 
+function replaceRequired(source, needle, replacement, label) {
+  if (!source.includes(needle)) {
+    throw new Error(`[Town Red] Extension build transform failed: missing ${label}`);
+  }
+  return source.replace(needle, replacement);
+}
+
 function transformUserscript(source, version, listingMarkerFunctions) {
   const withoutHeader = source.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, '');
-  let transformed = storageShim + '\n' + withoutHeader
-    .replace('const PAGE = unsafeWindow;', 'const PAGE = window;')
-    .replace("const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;')
-    .replace(/Rightmove shared geographic client v[\d.]+ loaded/, `Rightmove Chrome extension client v${version} loaded`);
+  let transformed = storageShim + '\n' + withoutHeader;
 
-  transformed = transformed
-    .replace('    let spaceHeld = false;\n', `    let spaceHeld = false;\n${listingMarkerState}`)
-    .replace('    function updateCount() { countEl.textContent = `${strokes.length} ${strokes.length === 1 ? \'stroke\' : \'strokes\'}`; }', '    function updateCount() { countEl.textContent = `${strokes.length} ${strokes.length === 1 ? \'stroke\' : \'strokes\'} · ${markers.length} ${markers.length === 1 ? \'point\' : \'points\'}`; }')
-    .replace('    function sortStrokes() {', `${listingMarkerFunctions}\n    function sortStrokes() {`)
-    .replace('      strokes = [];\n      currentStroke = null;\n', '      strokes = [];\n      markers = [];\n      currentStroke = null;\n      renderTownRedMarkers();\n')
-    .replace('      await loadRemoteStrokes();\n      await subscribeRealtime();', '      await loadRemoteStrokes();\n      await loadRemoteMarkers();\n      await subscribeRealtime();')
-    .replace("        }, payload => {\n          console.info('[Town Red] realtime INSERT', payload);\n          if (selectedMapId === subscribedMapId) mergeStroke(payload.new);\n        })\n        .subscribe((status, error) => {", "        }, payload => {\n          console.info('[Town Red] realtime INSERT', payload);\n          if (selectedMapId === subscribedMapId) mergeStroke(payload.new);\n        })\n        .on('postgres_changes', { event: '*', schema: 'public', table: 'markers', filter: `map_id=eq.${subscribedMapId}` }, payload => {\n          if (selectedMapId !== subscribedMapId) return;\n          if (payload.eventType === 'DELETE') { markers = markers.filter(item => item.id !== payload.old?.id); updateCount(); renderTownRedMarkers(); } else mergeMarker(payload.new);\n        })\n        .subscribe((status, error) => {")
-    .replace('      if (currentStroke) drawStroke(currentStroke);\n    }', '      if (currentStroke) drawStroke(currentStroke);\n      renderTownRedMarkers();\n    }')
-    .replace("    $('#tr-refresh').addEventListener('click', () => loadRemoteStrokes().catch(reportError));", "    $('#tr-refresh').addEventListener('click', () => Promise.all([loadRemoteStrokes(), loadRemoteMarkers()]).catch(reportError));")
-    .replace("    document.addEventListener('keydown', event => {", "    document.addEventListener('click', event => captureRightmoveProperty(event), true);\n\n    document.addEventListener('keydown', event => {")
-    .replace("        await loadRemoteStrokes();\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes');", "        await Promise.all([loadRemoteStrokes(), loadRemoteMarkers()]);\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes', markers.length, 'points');");
+  transformed = replaceRequired(transformed, 'const PAGE = unsafeWindow;', 'const PAGE = window;', 'unsafeWindow bridge');
+  transformed = replaceRequired(transformed, "const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;', 'Supabase bridge');
+  transformed = transformed.replace(/Rightmove shared geographic client v[\d.]+ loaded/, `Rightmove Chrome extension client v${version} loaded`);
 
+  transformed = replaceRequired(
+    transformed,
+    '    let strokes = [];\n',
+    `    let strokes = [];\n${listingMarkerState}`,
+    'marker state anchor'
+  );
+  transformed = replaceRequired(
+    transformed,
+    '    function updateCount() { countEl.textContent = `${strokes.length} ${strokes.length === 1 ? \'stroke\' : \'strokes\'}`; }',
+    '    function updateCount() { countEl.textContent = `${strokes.length} ${strokes.length === 1 ? \'stroke\' : \'strokes\'} · ${markers.length} ${markers.length === 1 ? \'point\' : \'points\'}`; }',
+    'marker count'
+  );
+  transformed = replaceRequired(transformed, '    function sortStrokes() {', `${listingMarkerFunctions}\n    function sortStrokes() {`, 'listing marker functions');
+  transformed = replaceRequired(
+    transformed,
+    '      strokes = [];\n      currentStroke = null;\n',
+    '      strokes = [];\n      markers = [];\n      currentStroke = null;\n      renderTownRedMarkers();\n',
+    'map selection marker reset'
+  );
+  transformed = replaceRequired(
+    transformed,
+    '      await loadRemoteStrokes();\n      await subscribeRealtime();',
+    '      await loadRemoteStrokes();\n      await loadRemoteMarkers();\n      await subscribeRealtime();',
+    'marker initial load'
+  );
+  transformed = replaceRequired(
+    transformed,
+    "        }, payload => {\n          console.info('[Town Red] realtime INSERT', payload);\n          if (selectedMapId === subscribedMapId) mergeStroke(payload.new);\n        })\n        .subscribe((status, error) => {",
+    "        }, payload => {\n          console.info('[Town Red] realtime INSERT', payload);\n          if (selectedMapId === subscribedMapId) mergeStroke(payload.new);\n        })\n        .on('postgres_changes', { event: '*', schema: 'public', table: 'markers', filter: `map_id=eq.${subscribedMapId}` }, payload => {\n          if (selectedMapId !== subscribedMapId) return;\n          if (payload.eventType === 'DELETE') { markers = markers.filter(item => item.id !== payload.old?.id); updateCount(); renderTownRedMarkers(); } else mergeMarker(payload.new);\n        })\n        .subscribe((status, error) => {",
+    'marker realtime subscription'
+  );
+  transformed = replaceRequired(
+    transformed,
+    '      if (currentStroke) drawStroke(currentStroke);\n    }',
+    '      if (currentStroke) drawStroke(currentStroke);\n      renderTownRedMarkers();\n    }',
+    'marker redraw hook'
+  );
+  transformed = replaceRequired(
+    transformed,
+    "    $('#tr-refresh').addEventListener('click', () => loadRemoteStrokes().catch(reportError));",
+    "    $('#tr-refresh').addEventListener('click', () => Promise.all([loadRemoteStrokes(), loadRemoteMarkers()]).catch(reportError));",
+    'marker refresh button'
+  );
+  transformed = replaceRequired(
+    transformed,
+    "    document.addEventListener('keydown', event => {",
+    "    document.addEventListener('click', event => captureRightmoveProperty(event), true);\n\n    document.addEventListener('keydown', event => {",
+    'property capture listener'
+  );
+  transformed = replaceRequired(
+    transformed,
+    "        await loadRemoteStrokes();\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes');",
+    "        await Promise.all([loadRemoteStrokes(), loadRemoteMarkers()]);\n        console.info('[Town Red] periodic sync complete:', strokes.length, 'strokes', markers.length, 'points');",
+    'marker periodic sync'
+  );
+
+  if (!transformed.includes('let markers = [];') || !transformed.includes('async function captureRightmoveProperty')) {
+    throw new Error('[Town Red] Extension build verification failed: listing capture feature is incomplete');
+  }
   return transformed;
 }
 
