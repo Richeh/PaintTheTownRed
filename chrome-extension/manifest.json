@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Town Red for Rightmove",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Paint and share collaborative preference areas on Rightmove property maps.",
   "icons": {
     "16": "icons/icon-16.png",
