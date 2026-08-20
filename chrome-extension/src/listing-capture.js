@@ -63,6 +63,7 @@
 
     async function loadRemoteMarkers() {
       if (!selectedMapId) { markers = []; renderTownRedMarkers(); return; }
+      await ensureAuth();
       const mapIdAtStart = selectedMapId;
       const result = await sb.from('markers')
         .select('id,map_id,created_by,kind,label,longitude,latitude,source_url,created_at,updated_at')
@@ -113,6 +114,7 @@
 
       setTimeout(async () => {
         try {
+          await ensureAuth();
           const link = nearestPropertyLink(clientX, clientY, target);
           const sourceUrl = canonicalPropertyUrl(link?.href);
           if (!sourceUrl) return;
