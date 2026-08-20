@@ -1,0 +1,9 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <style>
+    .s0 { fill: #9c1616 }
+    .s1 { fill: #242675; stroke: #ffffff; paint-order: stroke fill markers; stroke-linejoin: round; stroke-width: 6 }
+  </style>
+  <path fill-rule="evenodd" class="s0" d="m95 35.34v92.66h-62.86v-92.66z"/>
+  <path fill-rule="evenodd" class="s0" d="m77.39 6.53l48.18 69.75c6.02 8.72-1.51 19.62-13.55 19.62h-96.35c-12.05 0-19.58-10.9-13.55-19.62l48.17-69.75c6.02-8.71 21.08-8.71 27.1 0z"/>
+  <path fill-rule="evenodd" class="s1" d="m63.5 117c-12.44 0-22.5-9.39-22.5-21 0-11.61 10.06-21 22.5-21 12.44 0 22.5 9.39 22.5 21 0 11.61-10.06 21-22.5 21z"/>
+</svg>
