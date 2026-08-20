@@ -155,13 +155,50 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
   function redraw() { if(destroyed)return;resizeCanvas();ctx.clearRect(0,0,canvas.width,canvas.height);for(const s of [...visibleStrokes()].sort((a,b)=>Number(a.sequence||0)-Number(b.sequence||0)))drawStroke(s);if(draftStroke)drawStroke(draftStroke); }
 
   function canManageMarker(row) { return Boolean(editor.enabled && (editor.role === 'owner' || row.created_by === currentUserId)); }
-  function markerElement(row) {
-    const el=document.createElement('button');el.type='button';el.className='flex max-w-52 items-center gap-1.5 rounded-full border border-stone-300 bg-white/95 px-2 py-1 text-xs font-semibold text-stone-800 shadow-md backdrop-blur hover:border-stone-500 hover:bg-white';el.title=canManageMarker(row)?`${row.label} — click to edit`:row.label;
-    const symbol=document.createElement('span');symbol.className='grid h-5 w-5 shrink-0 place-items-center rounded-full bg-stone-900 text-sm text-white';symbol.textContent=MARKER_SYMBOLS[row.kind]||MARKER_SYMBOLS.point;
-    const label=document.createElement('span');label.className='truncate';label.textContent=row.label;el.append(symbol,label);
-    el.addEventListener('click',(event)=>{event.stopPropagation();openEditMarker(row);}); return el;
+  function displayMarkerLabel(value) { return String(value || '').replace(/^view property details(?:\s+for)?\s*[:\-–—]?\s*/i, '').trim() || 'Property'; }
+  function closePropertyPopup() { shell.querySelector('[data-town-red-property-popup]')?.remove(); }
+  function openPropertyPopup(row, anchor) {
+    closePropertyPopup();
+    if (!row?.source_url || !anchor?.isConnected) return;
+    const shellRect = shell.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    const popup = document.createElement('div');
+    popup.dataset.townRedPropertyPopup = 'true';
+    popup.className = 'absolute z-30 w-64 -translate-x-1/2 -translate-y-full rounded-xl border border-stone-200 bg-white p-3 text-sm text-stone-800 shadow-xl';
+    popup.style.left = `${anchorRect.left - shellRect.left + anchorRect.width / 2}px`;
+    popup.style.top = `${anchorRect.top - shellRect.top - 8}px`;
+    const address = document.createElement('div');
+    address.className = 'font-semibold leading-5';
+    address.textContent = displayMarkerLabel(row.label);
+    const actions = document.createElement('div');
+    actions.className = 'mt-3 flex flex-wrap gap-2';
+    const open = document.createElement('a');
+    open.href = row.source_url;
+    open.target = '_blank';
+    open.rel = 'noopener noreferrer';
+    open.className = 'rounded-lg bg-red-800 px-3 py-2 text-xs font-semibold text-white hover:bg-red-900';
+    open.textContent = 'Open on Rightmove';
+    actions.append(open);
+    if (canManageMarker(row)) {
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50';
+      edit.textContent = 'Edit point';
+      edit.addEventListener('click', (event) => { event.stopPropagation(); closePropertyPopup(); openEditMarker(row); });
+      actions.append(edit);
+    }
+    popup.append(address, actions);
+    popup.addEventListener('click', event => event.stopPropagation());
+    shell.appendChild(popup);
   }
-  function renderMarkers(){for(const m of mapMarkers)m.remove();mapMarkers=[];for(const row of markers){const marker=new Marker({element:markerElement(row),anchor:'bottom'}).setLngLat([Number(row.longitude),Number(row.latitude)]).addTo(map);mapMarkers.push(marker);}}
+  function markerElement(row) {
+    const el=document.createElement('button');el.type='button';el.className='flex max-w-52 items-center gap-1.5 rounded-full border border-stone-300 bg-white/95 px-2 py-1 text-xs font-semibold text-stone-800 shadow-md backdrop-blur hover:border-stone-500 hover:bg-white';
+    const shownLabel=displayMarkerLabel(row.label);el.title=row.source_url?shownLabel:(canManageMarker(row)?`${shownLabel} — click to edit`:shownLabel);
+    const symbol=document.createElement('span');symbol.className='grid h-5 w-5 shrink-0 place-items-center rounded-full bg-stone-900 text-sm text-white';symbol.textContent=MARKER_SYMBOLS[row.kind]||MARKER_SYMBOLS.point;
+    const label=document.createElement('span');label.className='truncate';label.textContent=shownLabel;el.append(symbol,label);
+    el.addEventListener('click',(event)=>{event.stopPropagation();if(row.source_url)openPropertyPopup(row,el);else openEditMarker(row);}); return el;
+  }
+  function renderMarkers(){closePropertyPopup();for(const m of mapMarkers)m.remove();mapMarkers=[];for(const row of markers){const marker=new Marker({element:markerElement(row),anchor:'bottom'}).setLngLat([Number(row.longitude),Number(row.latitude)]).addTo(map);mapMarkers.push(marker);}}
   async function switchMarkerMap(mapId){if(mapId===activeMapId&&unsubscribeMarkers)return;activeMapId=mapId||null;unsubscribeMarkers?.();unsubscribeMarkers=null;markers=[];renderMarkers();if(!activeMapId)return;try{markers=await loadMarkers(activeMapId);if(destroyed)return;renderMarkers();unsubscribeMarkers=await subscribeToMarkerChanges(activeMapId,async()=>{try{markers=await loadMarkers(activeMapId);renderMarkers();}catch(e){console.warn('[Town Red] marker refresh failed',e);}},(status,error)=>{if(['CHANNEL_ERROR','TIMED_OUT'].includes(status))console.warn('[Town Red] marker realtime status',status,error);});}catch(e){console.warn('[Town Red] could not load markers',e);}}
   function syncSelectedMap(){const selected=currentSelectedMapId();if(selected&&selected!==activeMapId){loadLayerPreferences(selected);switchMarkerMap(selected);}}
 
@@ -173,7 +210,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
   function startPointPlacement(move=false){if(!editor.enabled)return;syncSelectedMap();if(!activeMapId)return;placingPoint=true;markerDialog.close();addPointButton.textContent=move?'Click new location…':'Click map…';addPointButton.classList.add('ring-2','ring-red-300');canvas.style.pointerEvents='none';map.getCanvas().style.cursor='crosshair';}
 
   addPointButton.addEventListener('click',()=>startPointPlacement(false));
-  map.on('click',(event)=>{if(!placingPoint||!editor.enabled)return;const point={longitude:event.lngLat.lng,latitude:event.lngLat.lat};const moving=Boolean(movingMarker);stopPointPlacement();if(moving){editingMarker=movingMarker;movingMarker=null;pendingPoint=point;resetMarkerDialog();markerTitle.textContent='Move point';markerDescription.textContent='Save this new location, or move it again.';markerKind.value=editingMarker.kind;markerLabel.value=editingMarker.label;markerSave.textContent='Save changes';markerDelete.classList.remove('hidden');markerMove.classList.remove('hidden');markerPosition.textContent='New location selected.';markerPosition.classList.remove('hidden');showMarkerDialog();}else openAddMarker(point);});
+  map.on('click',(event)=>{closePropertyPopup();if(!placingPoint||!editor.enabled)return;const point={longitude:event.lngLat.lng,latitude:event.lngLat.lat};const moving=Boolean(movingMarker);stopPointPlacement();if(moving){editingMarker=movingMarker;movingMarker=null;pendingPoint=point;resetMarkerDialog();markerTitle.textContent='Move point';markerDescription.textContent='Save this new location, or move it again.';markerKind.value=editingMarker.kind;markerLabel.value=editingMarker.label;markerSave.textContent='Save changes';markerDelete.classList.remove('hidden');markerMove.classList.remove('hidden');markerPosition.textContent='New location selected.';markerPosition.classList.remove('hidden');showMarkerDialog();}else openAddMarker(point);});
   markerCancel.addEventListener('click',()=>{pendingPoint=null;editingMarker=null;movingMarker=null;markerDialog.close();});
   markerMove.addEventListener('click',()=>{if(!editingMarker)return;movingMarker=editingMarker;startPointPlacement(true);});
   markerDelete.addEventListener('click',async()=>{if(!editingMarker||!canManageMarker(editingMarker))return;if(!window.confirm(`Delete “${editingMarker.label}”?`))return;markerDelete.disabled=true;markerError.classList.add('hidden');try{await deleteMarker(editingMarker.id);markers=markers.filter(m=>m.id!==editingMarker.id);renderMarkers();editingMarker=null;pendingPoint=null;markerDialog.close();}catch(e){markerError.textContent=e instanceof Error?e.message:String(e);markerError.classList.remove('hidden');}finally{markerDelete.disabled=false;}});
@@ -191,7 +228,7 @@ export function createTownRedMap(container, { onReady, onError, onStrokeComplete
   function finishDraft(event){if(!draftStroke)return;if(event?.pointerId!=null&&canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);const finished=draftStroke;draftStroke=null;redraw();onStrokeComplete?.(finished);}
   canvas.addEventListener('pointerup',finishDraft);canvas.addEventListener('pointercancel',finishDraft);
   const mapSelect=document.querySelector('#shared-map-select');const onMapSelectChange=()=>{const next=currentSelectedMapId();if(next!==activeMapId){loadLayerPreferences(next);switchMarkerMap(next);}setEditor(editor);};mapSelect?.addEventListener('change',onMapSelectChange);
-  map.on('load',()=>{map.resize();syncSelectedMap();redraw();onReady?.(map);});map.on('move',redraw);map.on('resize',redraw);map.on('error',(event)=>{console.error('[Town Red] MapLibre error',event?.error||event);onError?.(event?.error||event);});
+  map.on('load',()=>{map.resize();syncSelectedMap();redraw();onReady?.(map);});map.on('move',()=>{closePropertyPopup();redraw();});map.on('resize',redraw);map.on('error',(event)=>{console.error('[Town Red] MapLibre error',event?.error||event);onError?.(event?.error||event);});
   const resizeObserver=new ResizeObserver(()=>{if(destroyed)return;map.resize();redraw();});resizeObserver.observe(shell);
-  return{map,setStrokes,upsertStroke,removeStroke,fitToStrokes,setEditor,redraw,destroy(){if(destroyed)return;destroyed=true;profileGeneration+=1;resizeObserver.disconnect();mapSelect?.removeEventListener('change',onMapSelectChange);unsubscribeMarkers?.();for(const marker of mapMarkers)marker.remove();markerDialog.remove();try{map.remove();}catch(e){console.warn('[Town Red] MapLibre teardown warning',e);}}};
+  return{map,setStrokes,upsertStroke,removeStroke,fitToStrokes,setEditor,redraw,destroy(){if(destroyed)return;destroyed=true;profileGeneration+=1;resizeObserver.disconnect();mapSelect?.removeEventListener('change',onMapSelectChange);unsubscribeMarkers?.();for(const marker of mapMarkers)marker.remove();closePropertyPopup();markerDialog.remove();try{map.remove();}catch(e){console.warn('[Town Red] MapLibre teardown warning',e);}}};
 }
