@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Town Red - Rightmove
 // @namespace    https://github.com/Richeh/PaintTheTownRed
-// @version      0.3.2
+// @version      0.3.3
 // @description  Paint and share geographically anchored preference areas on Rightmove maps.
 // @match        https://www.rightmove.co.uk/property-for-sale/map.html*
 // @match        https://www.rightmove.co.uk/properties/map.html*
@@ -114,6 +114,7 @@
 
     let settings = { ...DEFAULTS, ...(GM_getValue(SETTINGS_KEY, {}) || {}) };
     let userId = null;
+    let authPromise = null;
     let availableMaps = [];
     let selectedMapId = null;
     let selectedRole = null;
@@ -238,48 +239,71 @@
       canvas.style.pointerEvents = painting ? 'auto' : 'none';
       canvas.style.cursor = settings.mode === 'erase' ? 'cell' : 'crosshair';
 
-      $('#tr-invite').disabled = !selectedMapId || selectedRole !== 'owner';
-      $('#tr-undo').disabled = !selectedMapId || !canEdit();
-      $('#tr-refresh').disabled = !selectedMapId;
+      $('#tr-new').disabled = !userId;
+      $('#tr-join').disabled = !userId;
+      $('#tr-invite').disabled = !userId || !selectedMapId || selectedRole !== 'owner';
+      $('#tr-undo').disabled = !userId || !selectedMapId || !canEdit();
+      $('#tr-refresh').disabled = !userId || !selectedMapId;
       toolbar.querySelectorAll('[data-mode="red"],[data-mode="blue"],[data-mode="erase"]').forEach(button => {
-        button.disabled = !selectedMapId || !canEdit();
+        button.disabled = !userId || !selectedMapId || !canEdit();
       });
 
       if (userId) {
         const roleText = selectedRole ? ` · ${selectedRole}` : '';
         userStatus.textContent = `anon ${userId.slice(0, 6)}${roleText}`;
+      } else {
+        userStatus.textContent = 'auth pending';
       }
     }
 
     async function ensureAuth() {
-      setSync('authenticating…');
-      const sessionResult = await sb.auth.getSession();
-      if (sessionResult.error) throw sessionResult.error;
+      if (authPromise) return authPromise;
+      authPromise = (async () => {
+        setSync('authenticating…');
+        let sessionResult = await sb.auth.getSession();
+        if (sessionResult.error) throw sessionResult.error;
+        let session = sessionResult.data.session;
 
-      let session = sessionResult.data.session;
-      if (!session) {
-        const signed = await sb.auth.signInAnonymously();
-        if (signed.error) throw signed.error;
-        session = signed.data.session;
-      }
+        if (session) {
+          let userResult = await sb.auth.getUser();
+          if (userResult.error || !userResult.data.user) {
+            const refreshed = await sb.auth.refreshSession();
+            if (!refreshed.error && refreshed.data.session) session = refreshed.data.session;
+            userResult = await sb.auth.getUser();
+            if (userResult.error || !userResult.data.user) session = null;
+          }
+        }
 
-      userId = session?.user?.id || null;
-      if (!userId) throw new Error('Supabase returned no authenticated user ID.');
+        if (!session) {
+          const signed = await sb.auth.signInAnonymously();
+          if (signed.error) throw signed.error;
+          session = signed.data.session;
+        }
 
-      if (session?.access_token) await sb.realtime.setAuth(session.access_token);
-      updateControls();
-      setSync('connected');
+        userId = session?.user?.id || null;
+        if (!userId || !session?.access_token) throw new Error('Supabase returned no authenticated session.');
+        await sb.realtime.setAuth(session.access_token);
+        updateControls();
+        setSync('connected');
+        return session;
+      })();
+
+      try { return await authPromise; }
+      finally { authPromise = null; }
     }
 
     sb.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.id) userId = session.user.id;
       if (session?.access_token) {
         sb.realtime.setAuth(session.access_token).catch(error => {
           console.warn('[Town Red] could not refresh Realtime auth', error);
         });
       }
+      updateControls();
     });
 
     async function refreshMaps(preferId = selectedMapId) {
+      await ensureAuth();
       setSync('loading maps…');
       const result = await sb.from('maps').select('id,name,owner_id,created_at').order('created_at', { ascending: true });
       if (result.error) throw result.error;
@@ -300,6 +324,7 @@
     }
 
     async function determineRole(mapId) {
+      await ensureAuth();
       selectedRole = null;
       if (!mapId) { updateControls(); return; }
       const mapRecord = availableMaps.find(item => item.id === mapId);
@@ -316,6 +341,7 @@
     }
 
     async function createSharedMap() {
+      await ensureAuth();
       const name = window.prompt('Name for the shared overlay:', 'House Search');
       if (!name?.trim()) return;
       setSync('creating map…');
@@ -325,6 +351,7 @@
     }
 
     async function joinSharedMap() {
+      await ensureAuth();
       const token = window.prompt('Paste the invite token:');
       if (!token?.trim()) return;
       setSync('joining…');
@@ -339,6 +366,7 @@
     }
 
     async function createInvite() {
+      await ensureAuth();
       if (!selectedMapId || selectedRole !== 'owner') return;
       const role = (window.prompt('Invite role: editor or viewer', 'editor') || '').trim().toLowerCase();
       if (!role) return;
@@ -391,6 +419,7 @@
 
     async function loadRemoteStrokes() {
       if (!selectedMapId) return;
+      await ensureAuth();
       setSync('loading strokes…');
       const mapIdAtStart = selectedMapId;
       const result = await sb.from('strokes')
@@ -420,12 +449,9 @@
 
     async function subscribeRealtime() {
       if (!selectedMapId) return;
+      const session = await ensureAuth();
       unsubscribeRealtime();
-
-      const sessionResult = await sb.auth.getSession();
-      if (sessionResult.error) throw sessionResult.error;
-      const session = sessionResult.data.session;
-      if (session?.access_token) await sb.realtime.setAuth(session.access_token);
+      await sb.realtime.setAuth(session.access_token);
 
       const subscribedMapId = selectedMapId;
       realtimeChannel = sb.channel(`town-red-strokes-${subscribedMapId}-${Date.now()}`)
@@ -452,6 +478,7 @@
     }
 
     async function uploadStroke(stroke) {
+      await ensureAuth();
       if (!selectedMapId || !userId || !canEdit()) return;
       const id = crypto.randomUUID();
       const row = {
@@ -471,6 +498,7 @@
     }
 
     async function undoMine() {
+      await ensureAuth();
       if (!selectedMapId || !userId || !canEdit()) return;
       const mine = strokes.filter(item => item.created_by === userId && !item._pending)
         .sort((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0));
@@ -771,6 +799,6 @@
       }
     })();
 
-    console.info('[Town Red] Rightmove shared geographic client v0.3.2 loaded');
+    console.info('[Town Red] Rightmove shared geographic client v0.3.3 loaded');
   }
 })();
