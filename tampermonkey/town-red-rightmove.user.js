@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Town Red - Rightmove
 // @namespace    https://github.com/Richeh/PaintTheTownRed
-// @version      0.3.3
+// @version      0.3.2
 // @description  Paint and share geographically anchored preference areas on Rightmove maps.
 // @match        https://www.rightmove.co.uk/property-for-sale/map.html*
 // @match        https://www.rightmove.co.uk/properties/map.html*
@@ -114,6 +114,7 @@
 
     let settings = { ...DEFAULTS, ...(GM_getValue(SETTINGS_KEY, {}) || {}) };
     let userId = null;
+    let activeSession = null;
     let authPromise = null;
     let availableMaps = [];
     let selectedMapId = null;
@@ -256,22 +257,36 @@
       }
     }
 
+    function sessionUsable(session) {
+      if (!session?.user?.id || !session?.access_token) return false;
+      const expiresAtMs = Number(session.expires_at || 0) * 1000;
+      return !expiresAtMs || expiresAtMs > Date.now() + 30000;
+    }
+
     async function ensureAuth() {
+      if (sessionUsable(activeSession)) return activeSession;
       if (authPromise) return authPromise;
+
       authPromise = (async () => {
         setSync('authenticating…');
+        const establishedUserId = userId || activeSession?.user?.id || null;
+
         let sessionResult = await sb.auth.getSession();
         if (sessionResult.error) throw sessionResult.error;
         let session = sessionResult.data.session;
 
-        if (session) {
-          let userResult = await sb.auth.getUser();
-          if (userResult.error || !userResult.data.user) {
-            const refreshed = await sb.auth.refreshSession();
-            if (!refreshed.error && refreshed.data.session) session = refreshed.data.session;
-            userResult = await sb.auth.getUser();
-            if (userResult.error || !userResult.data.user) session = null;
-          }
+        if (session && establishedUserId && session.user?.id !== establishedUserId) {
+          throw new Error('Town Red authentication identity changed unexpectedly. Reload the page before editing.');
+        }
+
+        if (session && !sessionUsable(session)) {
+          const refreshed = await sb.auth.refreshSession();
+          if (refreshed.error) throw refreshed.error;
+          session = refreshed.data.session;
+        }
+
+        if (!session && establishedUserId) {
+          throw new Error('Town Red authentication session was lost. Reload the page to restore it; a new anonymous identity will not be created automatically.');
         }
 
         if (!session) {
@@ -280,8 +295,9 @@
           session = signed.data.session;
         }
 
-        userId = session?.user?.id || null;
-        if (!userId || !session?.access_token) throw new Error('Supabase returned no authenticated session.');
+        if (!sessionUsable(session)) throw new Error('Supabase returned no usable authenticated session.');
+        activeSession = session;
+        userId = session.user.id;
         await sb.realtime.setAuth(session.access_token);
         updateControls();
         setSync('connected');
@@ -293,7 +309,14 @@
     }
 
     sb.auth.onAuthStateChange((_event, session) => {
-      if (session?.user?.id) userId = session.user.id;
+      if (session?.user?.id && userId && session.user.id !== userId) {
+        console.error('[Town Red] ignoring unexpected auth identity change', userId, session.user.id);
+        return;
+      }
+      if (session?.user?.id) {
+        activeSession = session;
+        userId = session.user.id;
+      }
       if (session?.access_token) {
         sb.realtime.setAuth(session.access_token).catch(error => {
           console.warn('[Town Red] could not refresh Realtime auth', error);
@@ -399,6 +422,7 @@
     }
 
     async function selectSharedMap(mapId) {
+      await ensureAuth();
       unsubscribeRealtime();
       selectedMapId = mapId || null;
       selectedRole = null;
@@ -418,8 +442,8 @@
     }
 
     async function loadRemoteStrokes() {
-      if (!selectedMapId) return;
       await ensureAuth();
+      if (!selectedMapId) return;
       setSync('loading strokes…');
       const mapIdAtStart = selectedMapId;
       const result = await sb.from('strokes')
@@ -448,10 +472,14 @@
     }
 
     async function subscribeRealtime() {
+      await ensureAuth();
       if (!selectedMapId) return;
-      const session = await ensureAuth();
       unsubscribeRealtime();
-      await sb.realtime.setAuth(session.access_token);
+
+      const sessionResult = await sb.auth.getSession();
+      if (sessionResult.error) throw sessionResult.error;
+      const session = sessionResult.data.session || activeSession;
+      if (session?.access_token) await sb.realtime.setAuth(session.access_token);
 
       const subscribedMapId = selectedMapId;
       realtimeChannel = sb.channel(`town-red-strokes-${subscribedMapId}-${Date.now()}`)
@@ -799,6 +827,6 @@
       }
     })();
 
-    console.info('[Town Red] Rightmove shared geographic client v0.3.3 loaded');
+    console.info('[Town Red] Rightmove shared geographic client v0.3.2 loaded');
   }
 })();
