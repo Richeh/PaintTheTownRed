@@ -124,7 +124,7 @@ export async function createStroke({ mapId, userId, mode, brushMetres, opacity, 
   return data;
 }
 
-const MARKER_COLUMNS = 'id,map_id,created_by,kind,label,longitude,latitude,created_at,updated_at';
+const MARKER_COLUMNS = 'id,map_id,created_by,kind,label,longitude,latitude,source_url,created_at,updated_at';
 
 export async function loadMarkers(mapId) {
   if (!mapId) return [];
@@ -137,7 +137,7 @@ export async function loadMarkers(mapId) {
   return data || [];
 }
 
-export async function createMarker({ mapId, userId, kind, label, longitude, latitude }) {
+export async function createMarker({ mapId, userId, kind, label, longitude, latitude, sourceUrl = null }) {
   const { data, error } = await supabase
     .from('markers')
     .insert({
@@ -147,6 +147,7 @@ export async function createMarker({ mapId, userId, kind, label, longitude, lati
       label: label.trim(),
       longitude,
       latitude,
+      source_url: sourceUrl || null,
     })
     .select(MARKER_COLUMNS)
     .single();
@@ -154,7 +155,7 @@ export async function createMarker({ mapId, userId, kind, label, longitude, lati
   return data;
 }
 
-export async function updateMarker({ id, kind, label, longitude, latitude }) {
+export async function updateMarker({ id, kind, label, longitude, latitude, sourceUrl }) {
   const changes = {
     kind,
     label: label.trim(),
@@ -162,6 +163,7 @@ export async function updateMarker({ id, kind, label, longitude, latitude }) {
   };
   if (Number.isFinite(Number(longitude))) changes.longitude = Number(longitude);
   if (Number.isFinite(Number(latitude))) changes.latitude = Number(latitude);
+  if (sourceUrl !== undefined) changes.source_url = sourceUrl || null;
 
   const { data, error } = await supabase
     .from('markers')
