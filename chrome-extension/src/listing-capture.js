@@ -10,10 +10,25 @@
       } catch { return null; }
     }
 
+    function cleanPropertyLabel(value) {
+      let text = String(value || '').replace(/\s+/g, ' ').trim();
+      text = text
+        .replace(/^view property details(?:\s+for)?\s*[:\-–—]?\s*/i, '')
+        .replace(/^property details(?:\s+for)?\s*[:\-–—]?\s*/i, '')
+        .replace(/^view details(?:\s+for)?\s*[:\-–—]?\s*/i, '')
+        .trim();
+      return text;
+    }
+
     function markerLabelFromLink(link, sourceUrl) {
-      const raw = [link?.getAttribute?.('aria-label'), link?.textContent]
-        .map(value => String(value || '').replace(/\s+/g, ' ').trim())
-        .find(Boolean);
+      const popup = findPropertyPopup(link);
+      const candidates = [
+        popup?.querySelector?.('[data-testid*="address" i]')?.textContent,
+        popup?.querySelector?.('h1,h2,h3')?.textContent,
+        link?.getAttribute?.('aria-label'),
+        link?.textContent
+      ];
+      const raw = candidates.map(cleanPropertyLabel).find(value => value && !/^view property details$/i.test(value));
       if (raw) return raw.slice(0, 160);
       const id = sourceUrl?.match(/\/properties\/(\d+)/)?.[1];
       return id ? `Rightmove property ${id}` : 'Rightmove property';
@@ -129,7 +144,7 @@
         display: 'block', width: '100%', boxSizing: 'border-box', marginTop: '10px',
         padding: '9px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700',
         fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', fontSize: '13px',
-        border: destructive ? '1px solid #9c1616' : '1px solid #9c1616',
+        border: '1px solid #9c1616',
         background: destructive ? '#fff' : '#9c1616', color: destructive ? '#9c1616' : '#fff'
       });
     }
@@ -272,3 +287,32 @@
         }, delay);
       }
     }
+
+    async function keepAuthAlive() {
+      if (!activeSession?.user?.id || !activeSession?.access_token || !activeSession?.refresh_token) return;
+      try {
+        const current = await sb.auth.getSession();
+        if (current.error) throw current.error;
+        let session = current.data.session;
+
+        if (!session || session.user?.id !== activeSession.user.id) {
+          const restored = await sb.auth.setSession({
+            access_token: activeSession.access_token,
+            refresh_token: activeSession.refresh_token
+          });
+          if (restored.error) throw restored.error;
+          session = restored.data.session;
+        }
+
+        if (session?.user?.id === activeSession.user.id) {
+          activeSession = session;
+          userId = session.user.id;
+          if (session.access_token) await sb.realtime.setAuth(session.access_token);
+          updateControls();
+        }
+      } catch (error) {
+        console.warn('[Town Red] auth keepalive failed', error);
+      }
+    }
+
+    setInterval(keepAuthAlive, 45000);
