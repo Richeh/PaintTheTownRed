@@ -21,19 +21,48 @@ export function isAnonymousSession(session) {
   return Boolean(session?.user?.is_anonymous);
 }
 
+async function createAnonymousSession() {
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error) throw error;
+  if (!data.session?.user?.id) throw new Error('Supabase did not return an anonymous user.');
+  return data.session;
+}
+
 /**
- * Return the current Supabase session, creating an anonymous identity only
- * when this browser has no session yet. This keeps Town Red frictionless for
- * first-time users while allowing that same identity to be made permanent.
+ * Return a server-validated Supabase session, creating an anonymous identity
+ * only when this browser has no usable session yet.
+ *
+ * `getSession()` reads the locally persisted token. During development (and
+ * after an auth user has been removed from the Supabase dashboard) that token
+ * can outlive its row in auth.users. Using its stale uid as profiles.user_id
+ * then fails the profiles_user_id_fkey foreign key. `getUser()` validates the
+ * token against Supabase Auth before we trust it for database writes.
  */
 export async function ensureAnonymousSession() {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw sessionError;
-  if (sessionData.session) return sessionData.session;
 
-  const { data, error } = await supabase.auth.signInAnonymously();
-  if (error) throw error;
-  return data.session;
+  const session = sessionData.session;
+  if (!session) return createAnonymousSession();
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const validatedUser = userData?.user;
+
+  if (!userError && validatedUser?.id && validatedUser.id === session.user?.id) {
+    // Prefer the freshly validated user object while retaining the access and
+    // refresh tokens carried by the existing session.
+    return { ...session, user: validatedUser };
+  }
+
+  console.warn('[Town Red] Discarding stale Supabase session', userError || {
+    sessionUserId: session.user?.id,
+    validatedUserId: validatedUser?.id,
+  });
+
+  // Local scope clears only this browser's persisted session; it does not
+  // revoke sessions on other devices belonging to a persistent account.
+  await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+  return createAnonymousSession();
 }
 
 /**
@@ -52,7 +81,7 @@ export async function sendAccountClaimOtp(email) {
   if (error) throw error;
 }
 
-/** Verify the six-digit code sent while attaching an email to an anonymous user. */
+/** Verify the code sent while attaching an email to an anonymous user. */
 export async function verifyAccountClaimOtp(email, token) {
   const { data, error } = await supabase.auth.verifyOtp({
     email: email.trim(),
