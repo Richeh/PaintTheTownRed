@@ -45,21 +45,30 @@ export async function claimAnonymousAccount(email, password) {
   if (!session?.user?.id) throw new Error('No Town Red session is available to save.');
   if (!session.user.is_anonymous) throw new Error('This Town Red identity is already a saved account.');
 
-  // Linking the email identity upgrades the existing anonymous auth user, preserving auth.uid().
-  const { data: linkData, error: linkError } = await supabase.auth.linkIdentity({
-    provider: 'email',
-    options: { email },
-  });
-  if (linkError) throw linkError;
+  // Email/password identities are linked with updateUser(), not linkIdentity().
+  // This keeps the current auth.uid(), so existing Town Red ownership and memberships survive.
+  const { data: emailData, error: emailError } = await supabase.auth.updateUser({ email });
+  if (emailError) throw emailError;
 
-  // Supabase may require email verification before it permits credentials to be updated.
-  // Try now so projects without confirmation requirements complete in one step; otherwise
-  // the UI tells the user to verify and return to finish setting the password.
+  // Supabase requires the email to be verified before a password can be attached.
+  // On projects where verification is immediate/disabled this succeeds straight away;
+  // otherwise the caller can ask the user to verify and then finish the password later.
   const { data: passwordData, error: passwordError } = await supabase.auth.updateUser({ password });
   if (passwordError) {
-    return { session, linkData, passwordSet: false, passwordError };
+    return {
+      session: emailData.session || session,
+      emailPendingVerification: true,
+      passwordSet: false,
+      passwordError,
+    };
   }
-  return { session: passwordData.session || session, linkData, passwordSet: true, passwordError: null };
+
+  return {
+    session: passwordData.session || emailData.session || session,
+    emailPendingVerification: false,
+    passwordSet: true,
+    passwordError: null,
+  };
 }
 
 export async function finishAccountPassword(password) {
