@@ -30,24 +30,43 @@ function clearMessages() {
   successElement.classList.add('hidden');
 }
 
-function showProfileMode() {
-  profileForm.classList.remove('hidden');
-  signInForm.classList.add('hidden');
-  pendingSignInEmail = null;
-  codeBlock.classList.add('hidden');
+function hideCodeStep() {
+  codeBlock.hidden = true;
+  codeBlock.style.display = 'none';
   signInCode.required = false;
+  signInCode.value = '';
+  resendButton.hidden = true;
+  resendButton.style.display = 'none';
+}
+
+function showCodeStep() {
+  codeBlock.hidden = false;
+  codeBlock.style.display = 'block';
+  signInCode.required = true;
+  resendButton.hidden = false;
+  resendButton.style.display = '';
+}
+
+function showProfileMode() {
+  profileForm.hidden = false;
+  profileForm.style.display = '';
+  signInForm.hidden = true;
+  signInForm.style.display = 'none';
+  pendingSignInEmail = null;
+  if (codeBlock) hideCodeStep();
   clearMessages();
   requestAnimationFrame(() => nameInput.focus());
 }
 
 function showSignInMode() {
-  profileForm.classList.add('hidden');
-  signInForm.classList.remove('hidden');
+  profileForm.hidden = true;
+  profileForm.style.display = 'none';
+  signInForm.hidden = false;
+  signInForm.style.display = '';
   pendingSignInEmail = null;
-  codeBlock.classList.add('hidden');
-  signInCode.required = false;
+  signInEmail.readOnly = false;
+  if (codeBlock) hideCodeStep();
   signInSubmit.textContent = 'Send code';
-  resendButton.classList.add('hidden');
   clearMessages();
   requestAnimationFrame(() => signInEmail.focus());
 }
@@ -55,10 +74,8 @@ function showSignInMode() {
 function showCodeMode(email) {
   pendingSignInEmail = email;
   signInEmail.readOnly = true;
-  codeBlock.classList.remove('hidden');
-  signInCode.required = true;
+  showCodeStep();
   signInSubmit.textContent = 'Sign in';
-  resendButton.classList.remove('hidden');
   successElement.textContent = `We sent a six-digit sign-in code to ${email}.`;
   successElement.classList.remove('hidden');
   requestAnimationFrame(() => signInCode.focus());
@@ -100,7 +117,7 @@ function ensureDialog() {
         </div>
       </form>
 
-      <form data-sign-in-form class="hidden">
+      <form data-sign-in-form hidden style="display:none">
         <h2 class="m-0 text-lg font-semibold">Sign in to Town Red</h2>
         <p class="mt-1 text-sm leading-6 text-stone-600">
           Enter your email and we'll send you a one-time sign-in code. No password needed.
@@ -109,14 +126,14 @@ function ensureDialog() {
           Email
           <input data-sign-in-email class="${inputClass}" type="email" autocomplete="email" required />
         </label>
-        <label data-code-block class="mt-3 hidden text-sm font-medium text-stone-700">
+        <label data-code-block hidden style="display:none" class="mt-3 text-sm font-medium text-stone-700">
           Six-digit code
           <input data-sign-in-code class="${inputClass}" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" />
         </label>
         <div class="mt-5 flex flex-wrap items-center justify-between gap-2">
           <div class="flex flex-wrap gap-2">
             <button data-profile-toggle type="button" class="${buttonClass}">Use a new temporary identity</button>
-            <button data-resend type="button" class="${buttonClass} hidden">Resend code</button>
+            <button data-resend type="button" hidden style="display:none" class="${buttonClass}">Resend code</button>
           </div>
           <button type="submit" class="${primaryButtonClass}">Send code</button>
         </div>
@@ -142,12 +159,13 @@ function ensureDialog() {
   signInToggle = dialog.querySelector('[data-sign-in-toggle]');
   profileToggle = dialog.querySelector('[data-profile-toggle]');
 
+  hideCodeStep();
+
   dialog.addEventListener('cancel', (event) => event.preventDefault());
   signInToggle.addEventListener('click', showSignInMode);
   profileToggle.addEventListener('click', () => {
     signInEmail.readOnly = false;
     signInEmail.value = '';
-    signInCode.value = '';
     showProfileMode();
   });
 
@@ -231,7 +249,7 @@ export async function ensureProfile(userId) {
   nameInput.value = '';
   signInEmail.value = '';
   signInEmail.readOnly = false;
-  signInCode.value = '';
+  hideCodeStep();
   clearMessages();
   showProfileMode();
 
