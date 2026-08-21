@@ -1,4 +1,6 @@
     let activeRightmoveProperty = null;
+    let propertyCaptureGeneration = 0;
+    let propertyCaptureTimers = [];
 
     function canonicalPropertyUrl(href) {
       if (!href) return null;
@@ -246,75 +248,25 @@
       active.popup.appendChild(wrapper);
     }
 
-    function findCurrentPriceBubble(clientX, clientY, mapDiv) {
-      const pricePattern = /£\s*\d[\d,.]*(?:\s*[kKmM])?/;
-      const candidates = [];
+    function inspectRightmovePropertyPopup(clientX, clientY, target, point, generation) {
+      // Multiple delayed inspections are used because Rightmove creates the
+      // property popup asynchronously. Never let an older click overwrite the
+      // state belonging to a newer click.
+      if (generation !== propertyCaptureGeneration) return false;
 
-      for (const node of mapDiv.querySelectorAll('*')) {
-        const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
-        if (!pricePattern.test(text) || text.length > 40) continue;
-
-        const rect = node.getBoundingClientRect();
-        if (rect.width < 20 || rect.height < 14 || rect.width > 180 || rect.height > 90) continue;
-        if (rect.bottom < mapRect.top || rect.top > mapRect.top + mapRect.height || rect.right < mapRect.left || rect.left > mapRect.left + mapRect.width) continue;
-
-        const dx = clientX - (rect.left + rect.width / 2);
-        const dy = clientY - (rect.top + rect.height / 2);
-        const distance = Math.hypot(dx, dy);
-        if (distance > 120) continue;
-
-        candidates.push({ node, rect, text, distance, area: rect.width * rect.height });
-      }
-
-      candidates.sort((a, b) => a.distance - b.distance || a.area - b.area);
-      return candidates[0] || null;
-    }
-
-    function currentPriceBubblePoint(clientX, clientY, mapDiv) {
-      const bubble = findCurrentPriceBubble(clientX, clientY, mapDiv);
-      if (!bubble) {
-        console.debug('[Town Red] no current price bubble found; using click coordinate', { click: [clientX, clientY] });
-        return screenToLatLng(clientX, clientY);
-      }
-
-      const anchorX = bubble.rect.left + bubble.rect.width / 2;
-      const anchorY = bubble.rect.bottom;
-      const point = screenToLatLng(anchorX, anchorY);
-      if (point) {
-        console.debug('[Town Red] resolved current Rightmove price-bubble anchor', {
-          price: bubble.text,
-          click: [clientX, clientY],
-          anchor: [anchorX, anchorY],
-          bounds: {
-            left: bubble.rect.left,
-            top: bubble.rect.top,
-            width: bubble.rect.width,
-            height: bubble.rect.height
-          },
-          element: bubble.node
-        });
-      }
-      return point || screenToLatLng(clientX, clientY);
-    }
-
-    function inspectRightmovePropertyPopup(clientX, clientY, target, mapDiv) {
       const link = nearestPropertyLink(clientX, clientY, target);
       const sourceUrl = canonicalPropertyUrl(link?.href);
       if (!sourceUrl) return false;
       const popup = findPropertyPopup(link);
       if (!popup) return false;
-
-      // Resolve the geographic point now, after Rightmove has finished moving
-      // or recycling marker DOM for this popup. Do not reuse a coordinate that
-      // was captured before the delayed popup inspection ran.
-      const point = currentPriceBubblePoint(clientX, clientY, mapDiv);
-      if (!point) return false;
+      if (generation !== propertyCaptureGeneration) return false;
 
       activeRightmoveProperty = {
         sourceUrl,
         point,
         label: markerLabelFromLink(link, sourceUrl),
-        popup
+        popup,
+        generation
       };
       refreshRightmovePopupControl();
       return true;
@@ -330,16 +282,34 @@
       try { mapDiv = map?.getDiv?.(); } catch { return; }
       if (!mapDiv || !mapDiv.contains(event.target)) return;
 
-      const clientX = event.clientX, clientY = event.clientY, target = event.target;
+      // This is deliberately the original capture method. Before the popup
+      // button existed, the property was inserted immediately using this exact
+      // point and it proved stable. The button should delay the decision to add,
+      // not recalculate the property's geography from mutable Rightmove DOM.
+      const point = screenToLatLng(event.clientX, event.clientY);
+      if (!point) return;
 
+      const clientX = event.clientX, clientY = event.clientY, target = event.target;
+      const generation = ++propertyCaptureGeneration;
+
+      for (const timer of propertyCaptureTimers) clearTimeout(timer);
+      propertyCaptureTimers = [];
       activeRightmoveProperty = null;
       removeExistingPopupControls();
 
+      console.debug('[Town Red] captured property click coordinate', {
+        generation,
+        click: [clientX, clientY],
+        point
+      });
+
       for (const delay of [80, 180, 350, 650]) {
-        setTimeout(() => {
-          try { inspectRightmovePropertyPopup(clientX, clientY, target, mapDiv); }
+        const timer = setTimeout(() => {
+          if (generation !== propertyCaptureGeneration) return;
+          try { inspectRightmovePropertyPopup(clientX, clientY, target, point, generation); }
           catch (error) { console.warn('[Town Red] property popup decoration failed', error); }
         }, delay);
+        propertyCaptureTimers.push(timer);
       }
     }
 
