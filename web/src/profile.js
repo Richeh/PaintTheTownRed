@@ -10,29 +10,58 @@ let profileForm = null;
 let signInForm = null;
 let nameInput = null;
 let signInEmail = null;
-let signInPassword = null;
+let signInCode = null;
+let codeBlock = null;
 let errorElement = null;
+let successElement = null;
 let submitButton = null;
 let signInSubmit = null;
+let resendButton = null;
 let signInToggle = null;
 let profileToggle = null;
 let pendingResolve = null;
 let activeUserId = null;
+let pendingSignInEmail = null;
+
+function clearMessages() {
+  errorElement.textContent = '';
+  errorElement.classList.add('hidden');
+  successElement.textContent = '';
+  successElement.classList.add('hidden');
+}
 
 function showProfileMode() {
   profileForm.classList.remove('hidden');
   signInForm.classList.add('hidden');
-  errorElement.textContent = '';
-  errorElement.classList.add('hidden');
+  pendingSignInEmail = null;
+  codeBlock.classList.add('hidden');
+  signInCode.required = false;
+  clearMessages();
   requestAnimationFrame(() => nameInput.focus());
 }
 
 function showSignInMode() {
   profileForm.classList.add('hidden');
   signInForm.classList.remove('hidden');
-  errorElement.textContent = '';
-  errorElement.classList.add('hidden');
+  pendingSignInEmail = null;
+  codeBlock.classList.add('hidden');
+  signInCode.required = false;
+  signInSubmit.textContent = 'Send code';
+  resendButton.classList.add('hidden');
+  clearMessages();
   requestAnimationFrame(() => signInEmail.focus());
+}
+
+function showCodeMode(email) {
+  pendingSignInEmail = email;
+  signInEmail.readOnly = true;
+  codeBlock.classList.remove('hidden');
+  signInCode.required = true;
+  signInSubmit.textContent = 'Sign in';
+  resendButton.classList.remove('hidden');
+  successElement.textContent = `We sent a six-digit sign-in code to ${email}.`;
+  successElement.classList.remove('hidden');
+  requestAnimationFrame(() => signInCode.focus());
 }
 
 function finish(profile) {
@@ -40,6 +69,13 @@ function finish(profile) {
   pendingResolve?.(profile);
   pendingResolve = null;
   activeUserId = null;
+  pendingSignInEmail = null;
+}
+
+async function sendCode(email) {
+  const { sendSignInOtp } = await import('./supabase.js');
+  await sendSignInOtp(email);
+  showCodeMode(email);
 }
 
 function ensureDialog() {
@@ -67,23 +103,27 @@ function ensureDialog() {
       <form data-sign-in-form class="hidden">
         <h2 class="m-0 text-lg font-semibold">Sign in to Town Red</h2>
         <p class="mt-1 text-sm leading-6 text-stone-600">
-          Recover your saved maps, memberships and profile on this device.
+          Enter your email and we'll send you a one-time sign-in code. No password needed.
         </p>
         <label class="mt-4 block text-sm font-medium text-stone-700">
           Email
           <input data-sign-in-email class="${inputClass}" type="email" autocomplete="email" required />
         </label>
-        <label class="mt-3 block text-sm font-medium text-stone-700">
-          Password
-          <input data-sign-in-password class="${inputClass}" type="password" autocomplete="current-password" required />
+        <label data-code-block class="mt-3 hidden text-sm font-medium text-stone-700">
+          Six-digit code
+          <input data-sign-in-code class="${inputClass}" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" />
         </label>
         <div class="mt-5 flex flex-wrap items-center justify-between gap-2">
-          <button data-profile-toggle type="button" class="${buttonClass}">Use a new temporary identity</button>
-          <button type="submit" class="${primaryButtonClass}">Sign in</button>
+          <div class="flex flex-wrap gap-2">
+            <button data-profile-toggle type="button" class="${buttonClass}">Use a new temporary identity</button>
+            <button data-resend type="button" class="${buttonClass} hidden">Resend code</button>
+          </div>
+          <button type="submit" class="${primaryButtonClass}">Send code</button>
         </div>
       </form>
 
-      <p class="mt-3 hidden text-sm text-red-700" aria-live="polite"></p>
+      <p class="mt-3 hidden text-sm text-red-700" aria-live="assertive" data-error></p>
+      <p class="mt-3 hidden text-sm text-emerald-700" aria-live="polite" data-success></p>
     </div>
   `;
 
@@ -92,30 +132,31 @@ function ensureDialog() {
   signInForm = dialog.querySelector('[data-sign-in-form]');
   nameInput = dialog.querySelector('[data-profile-name]');
   signInEmail = dialog.querySelector('[data-sign-in-email]');
-  signInPassword = dialog.querySelector('[data-sign-in-password]');
-  errorElement = dialog.querySelector('p[aria-live]');
+  signInCode = dialog.querySelector('[data-sign-in-code]');
+  codeBlock = dialog.querySelector('[data-code-block]');
+  errorElement = dialog.querySelector('[data-error]');
+  successElement = dialog.querySelector('[data-success]');
   submitButton = profileForm.querySelector('button[type="submit"]');
   signInSubmit = signInForm.querySelector('button[type="submit"]');
+  resendButton = dialog.querySelector('[data-resend]');
   signInToggle = dialog.querySelector('[data-sign-in-toggle]');
   profileToggle = dialog.querySelector('[data-profile-toggle]');
 
-  dialog.addEventListener('cancel', (event) => {
-    // A profile or recovered account is required before startup can continue.
-    event.preventDefault();
-  });
-
+  dialog.addEventListener('cancel', (event) => event.preventDefault());
   signInToggle.addEventListener('click', showSignInMode);
-  profileToggle.addEventListener('click', showProfileMode);
+  profileToggle.addEventListener('click', () => {
+    signInEmail.readOnly = false;
+    signInEmail.value = '';
+    signInCode.value = '';
+    showProfileMode();
+  });
 
   profileForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const displayName = nameInput.value.trim();
     if (!displayName || !activeUserId) return;
-
-    errorElement.classList.add('hidden');
-    errorElement.textContent = '';
+    clearMessages();
     submitButton.disabled = true;
-
     try {
       const profile = await saveProfile({ userId: activeUserId, displayName });
       finish(profile);
@@ -129,20 +170,21 @@ function ensureDialog() {
 
   signInForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const email = signInEmail.value.trim();
-    const password = signInPassword.value;
-    if (!email || !password) return;
-
-    errorElement.classList.add('hidden');
-    errorElement.textContent = '';
+    clearMessages();
+    const email = (pendingSignInEmail || signInEmail.value).trim();
+    if (!email) return;
     signInSubmit.disabled = true;
-
     try {
-      // Dynamic import avoids the profile -> data -> supabase -> profile module cycle.
-      const { supabase } = await import('./supabase.js');
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      const signedInUserId = data.session?.user?.id;
+      if (!pendingSignInEmail) {
+        await sendCode(email);
+        return;
+      }
+
+      const token = signInCode.value.trim();
+      if (!/^\d{6}$/.test(token)) throw new Error('Enter the six-digit code from your email.');
+      const { verifySignInOtp } = await import('./supabase.js');
+      const session = await verifySignInOtp(email, token);
+      const signedInUserId = session?.user?.id;
       if (!signedInUserId) throw new Error('Supabase did not return a signed-in user.');
 
       activeUserId = signedInUserId;
@@ -152,14 +194,28 @@ function ensureDialog() {
         return;
       }
 
-      // A valid saved account without a Town Red profile can choose its display name now.
       nameInput.value = '';
+      signInEmail.readOnly = false;
       showProfileMode();
     } catch (error) {
       errorElement.textContent = error instanceof Error ? error.message : String(error);
       errorElement.classList.remove('hidden');
     } finally {
       signInSubmit.disabled = false;
+    }
+  });
+
+  resendButton.addEventListener('click', async () => {
+    if (!pendingSignInEmail) return;
+    clearMessages();
+    resendButton.disabled = true;
+    try {
+      await sendCode(pendingSignInEmail);
+    } catch (error) {
+      errorElement.textContent = error instanceof Error ? error.message : String(error);
+      errorElement.classList.remove('hidden');
+    } finally {
+      resendButton.disabled = false;
     }
   });
 }
@@ -174,9 +230,9 @@ export async function ensureProfile(userId) {
   activeUserId = userId;
   nameInput.value = '';
   signInEmail.value = '';
-  signInPassword.value = '';
-  errorElement.textContent = '';
-  errorElement.classList.add('hidden');
+  signInEmail.readOnly = false;
+  signInCode.value = '';
+  clearMessages();
   showProfileMode();
 
   return new Promise((resolve) => {
