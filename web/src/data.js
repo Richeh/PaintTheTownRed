@@ -1,5 +1,14 @@
 import { supabase } from './supabase.js';
 
+function databaseError(error, context) {
+  if (!error) return new Error(context);
+  const message = error.message || error.details || error.hint || String(error);
+  const suffix = error.code ? ` (${error.code})` : '';
+  const wrapped = new Error(`${context}: ${message}${suffix}`);
+  wrapped.cause = error;
+  return wrapped;
+}
+
 export async function listSharedMaps(userId) {
   const { data: maps, error } = await supabase
     .from('maps')
@@ -78,7 +87,7 @@ export async function getProfile(userId) {
     .select('user_id,display_name,created_at,updated_at')
     .eq('user_id', userId)
     .maybeSingle();
-  if (error) throw error;
+  if (error) throw databaseError(error, 'Could not load profile');
   return data || null;
 }
 
@@ -88,7 +97,7 @@ export async function saveProfile({ userId, displayName }) {
     .upsert({ user_id: userId, display_name: displayName.trim() }, { onConflict: 'user_id' })
     .select('user_id,display_name,created_at,updated_at')
     .single();
-  if (error) throw error;
+  if (error) throw databaseError(error, 'Could not save profile');
   return data;
 }
 
@@ -140,15 +149,7 @@ export async function loadMarkers(mapId) {
 export async function createMarker({ mapId, userId, kind, label, longitude, latitude, sourceUrl = null }) {
   const { data, error } = await supabase
     .from('markers')
-    .insert({
-      map_id: mapId,
-      created_by: userId,
-      kind,
-      label: label.trim(),
-      longitude,
-      latitude,
-      source_url: sourceUrl || null,
-    })
+    .insert({ map_id: mapId, created_by: userId, kind, label: label.trim(), longitude, latitude, source_url: sourceUrl || null })
     .select(MARKER_COLUMNS)
     .single();
   if (error) throw error;
@@ -156,11 +157,7 @@ export async function createMarker({ mapId, userId, kind, label, longitude, lati
 }
 
 export async function updateMarker({ id, kind, label, longitude, latitude, sourceUrl }) {
-  const changes = {
-    kind,
-    label: label.trim(),
-    updated_at: new Date().toISOString(),
-  };
+  const changes = { kind, label: label.trim(), updated_at: new Date().toISOString() };
   if (Number.isFinite(Number(longitude))) changes.longitude = Number(longitude);
   if (Number.isFinite(Number(latitude))) changes.latitude = Number(latitude);
   if (sourceUrl !== undefined) changes.source_url = sourceUrl || null;
@@ -176,19 +173,14 @@ export async function updateMarker({ id, kind, label, longitude, latitude, sourc
 }
 
 export async function deleteMarker(id) {
-  const { error } = await supabase
-    .from('markers')
-    .delete()
-    .eq('id', id);
+  const { error } = await supabase.from('markers').delete().eq('id', id);
   if (error) throw error;
 }
 
 async function setRealtimeAuth() {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw sessionError;
-  if (sessionData.session?.access_token) {
-    await supabase.realtime.setAuth(sessionData.session.access_token);
-  }
+  if (sessionData.session?.access_token) await supabase.realtime.setAuth(sessionData.session.access_token);
 }
 
 export async function subscribeToStrokeInserts(mapId, onInsert, onStatus) {
