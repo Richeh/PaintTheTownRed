@@ -263,6 +263,49 @@
       return true;
     }
 
+    // Rightmove property markers are pin-shaped. Their geographic coordinate is
+    // anchored at the tip (normally the bottom-centre of the clickable marker),
+    // not wherever inside the icon the user happened to click. Saving the raw
+    // mouse coordinate therefore introduced a small but visible positional drift
+    // when the point was rendered later in Town Red or at a different zoom.
+    function propertyPointFromClick(event, mapDiv) {
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const candidates = [];
+
+      for (const node of path) {
+        if (!(node instanceof Element) || node === mapDiv || !mapDiv.contains(node)) continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 12 || rect.height < 12 || rect.width > 140 || rect.height > 140) continue;
+        if (event.clientX < rect.left - 2 || event.clientX > rect.right + 2 || event.clientY < rect.top - 2 || event.clientY > rect.bottom + 2) continue;
+
+        const interactive = node.matches('button,[role="button"],[tabindex],a') || getComputedStyle(node).cursor === 'pointer';
+        const area = rect.width * rect.height;
+        // Prefer a real clickable marker container over tiny SVG descendants,
+        // then prefer the more compact candidate when several ancestors match.
+        candidates.push({ node, rect, score: (interactive ? 0 : 100000) + area });
+      }
+
+      candidates.sort((a, b) => a.score - b.score);
+      const marker = candidates[0];
+      if (marker) {
+        const anchorX = marker.rect.left + marker.rect.width / 2;
+        const anchorY = marker.rect.bottom - 1;
+        const anchored = screenToLatLng(anchorX, anchorY);
+        if (anchored) {
+          console.debug('[Town Red] captured property marker anchor', {
+            click: [event.clientX, event.clientY],
+            anchor: [anchorX, anchorY],
+            element: marker.node
+          });
+          return anchored;
+        }
+      }
+
+      // Fallback for a future Rightmove marker implementation that does not
+      // expose a useful DOM marker container.
+      return screenToLatLng(event.clientX, event.clientY);
+    }
+
     async function captureRightmoveProperty(event) {
       if (!selectedMapId || !canEdit() || !projection || !mapRect) return;
       if (settings.mode !== 'navigate' || spaceHeld) return;
@@ -273,7 +316,7 @@
       try { mapDiv = map?.getDiv?.(); } catch { return; }
       if (!mapDiv || !mapDiv.contains(event.target)) return;
 
-      const point = screenToLatLng(event.clientX, event.clientY);
+      const point = propertyPointFromClick(event, mapDiv);
       if (!point) return;
       const clientX = event.clientX, clientY = event.clientY, target = event.target;
 
