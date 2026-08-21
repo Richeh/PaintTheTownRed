@@ -78,6 +78,21 @@ export async function verifySignInOtp(email, token) {
   return withProfile(data.session);
 }
 
+// Temporary compatibility exports while the main Account dialog moves from passwords to OTP.
+// They deliberately map to OTP semantics, so no password credential is created or required.
+export async function claimAnonymousAccount(email) {
+  await beginAccountClaim(email);
+  return { passwordSet: false, emailPendingVerification: true };
+}
+
+export async function signInWithPassword(email, token) {
+  return verifySignInOtp(email, token);
+}
+
+export async function sendPasswordReset(email) {
+  return sendSignInOtp(email);
+}
+
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
