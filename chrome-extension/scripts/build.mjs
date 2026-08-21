@@ -83,16 +83,19 @@ function transformUserscript(source, version, listingMarkerFunctions) {
   transformed = replaceRequired(transformed, "const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;', 'Supabase bridge');
   transformed = transformed.replace(/Rightmove shared geographic client v[\d.]+ loaded/, `Rightmove Chrome extension client v${version} loaded`);
 
-  // A restored session can exist in extension-local storage before Supabase's
-  // Data API client has fully rebound its bearer token. Explicitly set and
-  // validate the stored access/refresh pair before the first PostgREST query.
-  // This prevents reloads from falling through to the anon database role.
-  transformed = replaceRequired(
-    transformed,
-    `        let sessionResult = await sb.auth.getSession();\n        if (sessionResult.error) throw sessionResult.error;\n        let session = sessionResult.data.session;`,
-    `        let sessionResult = await sb.auth.getSession();\n        if (sessionResult.error) throw sessionResult.error;\n        let session = sessionResult.data.session;\n\n        if (session?.access_token && session?.refresh_token) {\n          const rebound = await sb.auth.setSession({\n            access_token: session.access_token,\n            refresh_token: session.refresh_token\n          });\n          if (rebound.error) {\n            console.warn('[Town Red] stored auth session could not be rebound', rebound.error);\n            session = null;\n          } else {\n            session = rebound.data.session;\n          }\n        }\n\n        if (session?.access_token) {\n          const verified = await sb.auth.getUser(session.access_token);\n          if (verified.error || !verified.data.user?.id) {\n            console.warn('[Town Red] stored auth session is no longer valid', verified.error || 'missing user');\n            session = null;\n          } else if (verified.data.user.id !== session.user?.id) {\n            throw new Error('Town Red authentication identity changed unexpectedly. Reload the page before editing.');\n          }\n        }`,
-    'auth session rehydration'
-  );
+  // Older userscript revisions need the extension-specific session rebind
+  // injected here. Newer revisions already contain the same logic directly,
+  // so accept either form rather than failing the build on a missing old anchor.
+  const authAnchor = `        let sessionResult = await sb.auth.getSession();\n        if (sessionResult.error) throw sessionResult.error;\n        let session = sessionResult.data.session;`;
+  const authRehydrationMarker = "stored auth session could not be rebound";
+  if (!transformed.includes(authRehydrationMarker)) {
+    transformed = replaceRequired(
+      transformed,
+      authAnchor,
+      `${authAnchor}\n\n        if (session?.access_token && session?.refresh_token) {\n          const rebound = await sb.auth.setSession({\n            access_token: session.access_token,\n            refresh_token: session.refresh_token\n          });\n          if (rebound.error) {\n            console.warn('[Town Red] stored auth session could not be rebound', rebound.error);\n            session = null;\n          } else {\n            session = rebound.data.session;\n          }\n        }\n\n        if (session?.access_token) {\n          const verified = await sb.auth.getUser(session.access_token);\n          if (verified.error || !verified.data.user?.id) {\n            console.warn('[Town Red] stored auth session is no longer valid', verified.error || 'missing user');\n            session = null;\n          } else if (verified.data.user.id !== session.user?.id) {\n            throw new Error('Town Red authentication identity changed unexpectedly. Reload the page before editing.');\n          }\n        }`,
+      'auth session rehydration'
+    );
+  }
 
   transformed = replaceRegexRequired(
     transformed,
