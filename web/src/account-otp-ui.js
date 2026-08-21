@@ -42,22 +42,28 @@ function setup() {
   code.minLength = 6;
   code.required = false;
 
-  // Use inline display here rather than relying only on Tailwind's `hidden`
-  // utility. The legacy label also has `block`, and utility ordering can make
-  // that visible briefly or permanently depending on the generated CSS.
   function hideCodeStep() {
-    if (codeLabel) codeLabel.style.display = 'none';
-    submit.style.display = 'none';
     code.required = false;
+    if (codeLabel) {
+      codeLabel.hidden = true;
+      codeLabel.style.display = 'none';
+    }
+    submit.hidden = true;
+    submit.style.display = 'none';
   }
 
   function showCodeStep() {
-    if (codeLabel) codeLabel.style.display = 'block';
+    if (codeLabel) {
+      codeLabel.hidden = false;
+      codeLabel.style.display = 'block';
+    }
+    submit.hidden = false;
     submit.style.display = '';
     code.required = true;
   }
 
   hideCodeStep();
+  oldForgot.hidden = true;
   oldForgot.style.display = 'none';
 
   const leftActions = oldForgot.parentElement;
@@ -88,6 +94,7 @@ function setup() {
     email.readOnly = false;
     code.value = '';
     hideCodeStep();
+    sendButton.hidden = false;
     sendButton.style.display = '';
   }
 
@@ -114,9 +121,22 @@ function setup() {
     renderMode();
   }
 
+  // Reset synchronously before main.js opens the legacy dialog. Capture phase
+  // ensures the OTP first step wins even though main.js registered its click
+  // handler earlier.
   accountButton.addEventListener('click', () => {
-    setTimeout(() => refreshModeForSession().catch(() => {}), 0);
+    mode = 'claim';
+    renderMode();
+  }, true);
+
+  accountButton.addEventListener('click', () => {
+    refreshModeForSession().catch(() => {});
   });
+
+  // If anything else toggles the dialog open, enforce first-step state again.
+  new MutationObserver(() => {
+    if (dialog.open && !pendingEmail) hideCodeStep();
+  }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
 
   switchButton.addEventListener('click', () => {
     mode = mode === 'claim' ? 'signin' : 'claim';
@@ -140,6 +160,7 @@ function setup() {
       pendingEmail = address;
       email.readOnly = true;
       showCodeStep();
+      sendButton.hidden = true;
       sendButton.style.display = 'none';
       success.textContent = `A six-digit code has been sent to ${address}.`;
       success.classList.remove('hidden');
@@ -152,7 +173,6 @@ function setup() {
     }
   });
 
-  // Capture the submit before main.js's legacy password handler sees it.
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -160,6 +180,7 @@ function setup() {
     if (!pendingEmail) {
       error.textContent = 'Send a code first.';
       error.classList.remove('hidden');
+      hideCodeStep();
       return;
     }
     const token = code.value.trim();
