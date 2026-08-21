@@ -60,19 +60,30 @@ const listingMarkerState = String.raw`
     document.documentElement.appendChild(markerLayer);
 `;
 
+function normalizeNewlines(value) {
+  return String(value).replace(/\r\n/g, '\n');
+}
+
 function replaceRequired(source, needle, replacement, label) {
-  if (!source.includes(needle)) {
+  // Git may check files out with CRLF on Windows. Normalizing here keeps the
+  // source transforms deterministic across Windows/Linux/macOS instead of
+  // making every multiline anchor carry its own \r?\n handling.
+  const normalizedSource = normalizeNewlines(source);
+  const normalizedNeedle = normalizeNewlines(needle);
+  const normalizedReplacement = normalizeNewlines(replacement);
+  if (!normalizedSource.includes(normalizedNeedle)) {
     throw new Error(`[Town Red] Extension build transform failed: missing ${label}`);
   }
-  return source.replace(needle, replacement);
+  return normalizedSource.replace(normalizedNeedle, normalizedReplacement);
 }
 
 function replaceRegexRequired(source, regex, replacement, label) {
-  if (!regex.test(source)) {
+  const normalizedSource = normalizeNewlines(source);
+  if (!regex.test(normalizedSource)) {
     throw new Error(`[Town Red] Extension build transform failed: missing ${label}`);
   }
   regex.lastIndex = 0;
-  return source.replace(regex, replacement);
+  return normalizedSource.replace(regex, normalizeNewlines(replacement));
 }
 
 function transformUserscript(source, version, listingMarkerFunctions) {
