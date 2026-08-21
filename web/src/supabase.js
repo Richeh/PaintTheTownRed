@@ -38,55 +38,44 @@ export async function ensureAnonymousSession() {
   return withProfile(data.session);
 }
 
-export async function claimAnonymousAccount(email, password) {
+export async function beginAccountClaim(email) {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw sessionError;
   const session = sessionData.session;
   if (!session?.user?.id) throw new Error('No Town Red session is available to save.');
-  if (!session.user.is_anonymous) throw new Error('This Town Red identity is already a saved account.');
+  if (!session.user.is_anonymous) throw new Error('This Town Red identity is already saved.');
 
-  // Email/password identities are linked with updateUser(), not linkIdentity().
-  // This keeps the current auth.uid(), so existing Town Red ownership and memberships survive.
-  const { data: emailData, error: emailError } = await supabase.auth.updateUser({ email });
-  if (emailError) throw emailError;
-
-  // Supabase requires the email to be verified before a password can be attached.
-  // On projects where verification is immediate/disabled this succeeds straight away;
-  // otherwise the caller can ask the user to verify and then finish the password later.
-  const { data: passwordData, error: passwordError } = await supabase.auth.updateUser({ password });
-  if (passwordError) {
-    return {
-      session: emailData.session || session,
-      emailPendingVerification: true,
-      passwordSet: false,
-      passwordError,
-    };
-  }
-
-  return {
-    session: passwordData.session || emailData.session || session,
-    emailPendingVerification: false,
-    passwordSet: true,
-    passwordError: null,
-  };
-}
-
-export async function finishAccountPassword(password) {
-  const { data, error } = await supabase.auth.updateUser({ password });
+  const { data, error } = await supabase.auth.updateUser({ email });
   if (error) throw error;
   return data;
 }
 
-export async function signInWithPassword(email, password) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+export async function verifyAccountClaim(email, token) {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token: String(token || '').trim(),
+    type: 'email_change',
+  });
   if (error) throw error;
-  return withProfile(data.session);
+  return data.session;
 }
 
-export async function sendPasswordReset(email) {
-  const redirectTo = `${location.origin}${location.pathname}`;
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+export async function sendSignInOtp(email) {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false },
+  });
   if (error) throw error;
+}
+
+export async function verifySignInOtp(email, token) {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token: String(token || '').trim(),
+    type: 'email',
+  });
+  if (error) throw error;
+  return withProfile(data.session);
 }
 
 export async function signOut() {
