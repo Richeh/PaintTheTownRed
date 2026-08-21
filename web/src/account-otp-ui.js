@@ -41,9 +41,24 @@ function setup() {
   code.maxLength = 6;
   code.minLength = 6;
   code.required = false;
-  codeLabel?.classList.add('hidden');
 
-  oldForgot.classList.add('hidden');
+  // Use inline display here rather than relying only on Tailwind's `hidden`
+  // utility. The legacy label also has `block`, and utility ordering can make
+  // that visible briefly or permanently depending on the generated CSS.
+  function hideCodeStep() {
+    if (codeLabel) codeLabel.style.display = 'none';
+    submit.style.display = 'none';
+    code.required = false;
+  }
+
+  function showCodeStep() {
+    if (codeLabel) codeLabel.style.display = 'block';
+    submit.style.display = '';
+    code.required = true;
+  }
+
+  hideCodeStep();
+  oldForgot.style.display = 'none';
 
   const leftActions = oldForgot.parentElement;
   const sendButton = document.createElement('button');
@@ -72,10 +87,8 @@ function setup() {
     pendingEmail = null;
     email.readOnly = false;
     code.value = '';
-    code.required = false;
-    codeLabel?.classList.add('hidden');
-    submit.classList.add('hidden');
-    sendButton.classList.remove('hidden');
+    hideCodeStep();
+    sendButton.style.display = '';
   }
 
   function renderMode() {
@@ -126,10 +139,8 @@ function setup() {
       else await sendSignInOtp(address);
       pendingEmail = address;
       email.readOnly = true;
-      code.required = true;
-      codeLabel?.classList.remove('hidden');
-      submit.classList.remove('hidden');
-      sendButton.classList.add('hidden');
+      showCodeStep();
+      sendButton.style.display = 'none';
       success.textContent = `A six-digit code has been sent to ${address}.`;
       success.classList.remove('hidden');
       code.focus();
