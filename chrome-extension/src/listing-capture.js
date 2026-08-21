@@ -1,3 +1,31 @@
+    const ESTABLISHED_USER_KEY = 'town-red-established-user-id';
+    const originalAnonymousSignIn = sb.auth.signInAnonymously.bind(sb.auth);
+
+    // Keep a durable record of the Town Red identity used by this browser. If
+    // Supabase session restoration ever fails, do not silently mint a new
+    // anonymous user: that would make all existing map memberships appear to
+    // vanish even though they still belong to the previous auth user.
+    sb.auth.onAuthStateChange((_event, session) => {
+      const sessionUserId = session?.user?.id;
+      if (!sessionUserId) return;
+      const establishedUserId = GM_getValue(ESTABLISHED_USER_KEY, null);
+      if (!establishedUserId) GM_setValue(ESTABLISHED_USER_KEY, sessionUserId);
+    });
+
+    sb.auth.signInAnonymously = async (...args) => {
+      const establishedUserId = GM_getValue(ESTABLISHED_USER_KEY, null);
+      if (establishedUserId) {
+        throw new Error(
+          `Town Red could not restore browser identity ${establishedUserId.slice(0, 8)}. ` +
+          'It will not create a replacement identity because that would lose access to joined maps. Reload once; if this persists, clear Town Red extension storage and rejoin deliberately.'
+        );
+      }
+      const result = await originalAnonymousSignIn(...args);
+      const newUserId = result?.data?.user?.id || result?.data?.session?.user?.id;
+      if (newUserId) GM_setValue(ESTABLISHED_USER_KEY, newUserId);
+      return result;
+    };
+
     let activeRightmoveProperty = null;
     let propertyCaptureGeneration = 0;
     let propertyCaptureTimers = [];
@@ -249,9 +277,6 @@
     }
 
     function inspectRightmovePropertyPopup(clientX, clientY, target, point, generation) {
-      // Multiple delayed inspections are used because Rightmove creates the
-      // property popup asynchronously. Never let an older click overwrite the
-      // state belonging to a newer click.
       if (generation !== propertyCaptureGeneration) return false;
 
       const link = nearestPropertyLink(clientX, clientY, target);
@@ -282,10 +307,6 @@
       try { mapDiv = map?.getDiv?.(); } catch { return; }
       if (!mapDiv || !mapDiv.contains(event.target)) return;
 
-      // This is deliberately the original capture method. Before the popup
-      // button existed, the property was inserted immediately using this exact
-      // point and it proved stable. The button should delay the decision to add,
-      // not recalculate the property's geography from mutable Rightmove DOM.
       const point = screenToLatLng(event.clientX, event.clientY);
       if (!point) return;
 
@@ -332,6 +353,7 @@
         if (session?.user?.id === activeSession.user.id) {
           activeSession = session;
           userId = session.user.id;
+          GM_setValue(ESTABLISHED_USER_KEY, session.user.id);
           if (session.access_token) await sb.realtime.setAuth(session.access_token);
           updateControls();
         }
