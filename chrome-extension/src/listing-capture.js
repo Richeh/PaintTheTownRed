@@ -263,46 +263,57 @@
       return true;
     }
 
-    // Rightmove property markers are pin-shaped. Their geographic coordinate is
-    // anchored at the tip (normally the bottom-centre of the clickable marker),
-    // not wherever inside the icon the user happened to click. Saving the raw
-    // mouse coordinate therefore introduced a small but visible positional drift
-    // when the point was rendered later in Town Red or at a different zoom.
+    // Rightmove's visible price bubble is a much more stable geographic anchor
+    // than trying to infer which nested SVG/div happens to represent the marker.
+    // Find the nearest compact ancestor in the original click path whose text is
+    // price-like, then use the bottom-centre of that bubble (the pointer tip).
     function propertyPointFromClick(event, mapDiv) {
       const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const pricePattern = /£\s*\d[\d,.]*(?:\s*[kKmM])?/;
       const candidates = [];
 
-      for (const node of path) {
+      for (let depth = 0; depth < path.length; depth += 1) {
+        const node = path[depth];
         if (!(node instanceof Element) || node === mapDiv || !mapDiv.contains(node)) continue;
-        const rect = node.getBoundingClientRect();
-        if (rect.width < 12 || rect.height < 12 || rect.width > 140 || rect.height > 140) continue;
-        if (event.clientX < rect.left - 2 || event.clientX > rect.right + 2 || event.clientY < rect.top - 2 || event.clientY > rect.bottom + 2) continue;
 
-        const interactive = node.matches('button,[role="button"],[tabindex],a') || getComputedStyle(node).cursor === 'pointer';
-        const area = rect.width * rect.height;
-        // Prefer a real clickable marker container over tiny SVG descendants,
-        // then prefer the more compact candidate when several ancestors match.
-        candidates.push({ node, rect, score: (interactive ? 0 : 100000) + area });
+        const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!pricePattern.test(text) || text.length > 40) continue;
+
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 14 || rect.width > 180 || rect.height > 90) continue;
+        if (event.clientX < rect.left - 3 || event.clientX > rect.right + 3 || event.clientY < rect.top - 3 || event.clientY > rect.bottom + 3) continue;
+
+        // Prefer the closest price-containing node in the composed path. Area is
+        // only a tie-breaker, which avoids jumping between nested descendants.
+        candidates.push({ node, rect, depth, area: rect.width * rect.height, text });
       }
 
-      candidates.sort((a, b) => a.score - b.score);
-      const marker = candidates[0];
-      if (marker) {
-        const anchorX = marker.rect.left + marker.rect.width / 2;
-        const anchorY = marker.rect.bottom - 1;
+      candidates.sort((a, b) => a.depth - b.depth || a.area - b.area);
+      const bubble = candidates[0];
+      if (bubble) {
+        const anchorX = bubble.rect.left + bubble.rect.width / 2;
+        const anchorY = bubble.rect.bottom;
         const anchored = screenToLatLng(anchorX, anchorY);
         if (anchored) {
-          console.debug('[Town Red] captured property marker anchor', {
+          console.debug('[Town Red] captured Rightmove price-bubble anchor', {
+            price: bubble.text,
             click: [event.clientX, event.clientY],
             anchor: [anchorX, anchorY],
-            element: marker.node
+            bounds: {
+              left: bubble.rect.left,
+              top: bubble.rect.top,
+              width: bubble.rect.width,
+              height: bubble.rect.height
+            },
+            element: bubble.node
           });
           return anchored;
         }
       }
 
-      // Fallback for a future Rightmove marker implementation that does not
-      // expose a useful DOM marker container.
+      console.debug('[Town Red] no price bubble found; using click coordinate', {
+        click: [event.clientX, event.clientY]
+      });
       return screenToLatLng(event.clientX, event.clientY);
     }
 
