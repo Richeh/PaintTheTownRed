@@ -246,12 +246,69 @@
       active.popup.appendChild(wrapper);
     }
 
-    function inspectRightmovePropertyPopup(clientX, clientY, target, point) {
+    function findCurrentPriceBubble(clientX, clientY, mapDiv) {
+      const pricePattern = /£\s*\d[\d,.]*(?:\s*[kKmM])?/;
+      const candidates = [];
+
+      for (const node of mapDiv.querySelectorAll('*')) {
+        const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!pricePattern.test(text) || text.length > 40) continue;
+
+        const rect = node.getBoundingClientRect();
+        if (rect.width < 20 || rect.height < 14 || rect.width > 180 || rect.height > 90) continue;
+        if (rect.bottom < mapRect.top || rect.top > mapRect.top + mapRect.height || rect.right < mapRect.left || rect.left > mapRect.left + mapRect.width) continue;
+
+        const dx = clientX - (rect.left + rect.width / 2);
+        const dy = clientY - (rect.top + rect.height / 2);
+        const distance = Math.hypot(dx, dy);
+        if (distance > 120) continue;
+
+        candidates.push({ node, rect, text, distance, area: rect.width * rect.height });
+      }
+
+      candidates.sort((a, b) => a.distance - b.distance || a.area - b.area);
+      return candidates[0] || null;
+    }
+
+    function currentPriceBubblePoint(clientX, clientY, mapDiv) {
+      const bubble = findCurrentPriceBubble(clientX, clientY, mapDiv);
+      if (!bubble) {
+        console.debug('[Town Red] no current price bubble found; using click coordinate', { click: [clientX, clientY] });
+        return screenToLatLng(clientX, clientY);
+      }
+
+      const anchorX = bubble.rect.left + bubble.rect.width / 2;
+      const anchorY = bubble.rect.bottom;
+      const point = screenToLatLng(anchorX, anchorY);
+      if (point) {
+        console.debug('[Town Red] resolved current Rightmove price-bubble anchor', {
+          price: bubble.text,
+          click: [clientX, clientY],
+          anchor: [anchorX, anchorY],
+          bounds: {
+            left: bubble.rect.left,
+            top: bubble.rect.top,
+            width: bubble.rect.width,
+            height: bubble.rect.height
+          },
+          element: bubble.node
+        });
+      }
+      return point || screenToLatLng(clientX, clientY);
+    }
+
+    function inspectRightmovePropertyPopup(clientX, clientY, target, mapDiv) {
       const link = nearestPropertyLink(clientX, clientY, target);
       const sourceUrl = canonicalPropertyUrl(link?.href);
       if (!sourceUrl) return false;
       const popup = findPropertyPopup(link);
       if (!popup) return false;
+
+      // Resolve the geographic point now, after Rightmove has finished moving
+      // or recycling marker DOM for this popup. Do not reuse a coordinate that
+      // was captured before the delayed popup inspection ran.
+      const point = currentPriceBubblePoint(clientX, clientY, mapDiv);
+      if (!point) return false;
 
       activeRightmoveProperty = {
         sourceUrl,
@@ -261,60 +318,6 @@
       };
       refreshRightmovePopupControl();
       return true;
-    }
-
-    // Rightmove's visible price bubble is a much more stable geographic anchor
-    // than trying to infer which nested SVG/div happens to represent the marker.
-    // Find the nearest compact ancestor in the original click path whose text is
-    // price-like, then use the bottom-centre of that bubble (the pointer tip).
-    function propertyPointFromClick(event, mapDiv) {
-      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-      const pricePattern = /£\s*\d[\d,.]*(?:\s*[kKmM])?/;
-      const candidates = [];
-
-      for (let depth = 0; depth < path.length; depth += 1) {
-        const node = path[depth];
-        if (!(node instanceof Element) || node === mapDiv || !mapDiv.contains(node)) continue;
-
-        const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
-        if (!pricePattern.test(text) || text.length > 40) continue;
-
-        const rect = node.getBoundingClientRect();
-        if (rect.width < 20 || rect.height < 14 || rect.width > 180 || rect.height > 90) continue;
-        if (event.clientX < rect.left - 3 || event.clientX > rect.right + 3 || event.clientY < rect.top - 3 || event.clientY > rect.bottom + 3) continue;
-
-        // Prefer the closest price-containing node in the composed path. Area is
-        // only a tie-breaker, which avoids jumping between nested descendants.
-        candidates.push({ node, rect, depth, area: rect.width * rect.height, text });
-      }
-
-      candidates.sort((a, b) => a.depth - b.depth || a.area - b.area);
-      const bubble = candidates[0];
-      if (bubble) {
-        const anchorX = bubble.rect.left + bubble.rect.width / 2;
-        const anchorY = bubble.rect.bottom;
-        const anchored = screenToLatLng(anchorX, anchorY);
-        if (anchored) {
-          console.debug('[Town Red] captured Rightmove price-bubble anchor', {
-            price: bubble.text,
-            click: [event.clientX, event.clientY],
-            anchor: [anchorX, anchorY],
-            bounds: {
-              left: bubble.rect.left,
-              top: bubble.rect.top,
-              width: bubble.rect.width,
-              height: bubble.rect.height
-            },
-            element: bubble.node
-          });
-          return anchored;
-        }
-      }
-
-      console.debug('[Town Red] no price bubble found; using click coordinate', {
-        click: [event.clientX, event.clientY]
-      });
-      return screenToLatLng(event.clientX, event.clientY);
     }
 
     async function captureRightmoveProperty(event) {
@@ -327,8 +330,6 @@
       try { mapDiv = map?.getDiv?.(); } catch { return; }
       if (!mapDiv || !mapDiv.contains(event.target)) return;
 
-      const point = propertyPointFromClick(event, mapDiv);
-      if (!point) return;
       const clientX = event.clientX, clientY = event.clientY, target = event.target;
 
       activeRightmoveProperty = null;
@@ -336,7 +337,7 @@
 
       for (const delay of [80, 180, 350, 650]) {
         setTimeout(() => {
-          try { inspectRightmovePropertyPopup(clientX, clientY, target, point); }
+          try { inspectRightmovePropertyPopup(clientX, clientY, target, mapDiv); }
           catch (error) { console.warn('[Town Red] property popup decoration failed', error); }
         }, delay);
       }
