@@ -8,19 +8,29 @@ import AccountDialog from './AccountDialog.vue';
 // reads the persisted Supabase session and teleports account controls into the
 // existing header/footer. Successful sign-in/claim/sign-out flows reload the
 // page, so the map app always boots under exactly one authoritative identity.
+//
+// This split also means App.vue does not need to understand email addresses or
+// OTP state: it continues to work entirely in terms of the current auth.uid().
 const session = ref(null);
 const profile = ref(null);
 const open = ref(false);
 
+// Anonymous users are offered persistence/sign-in actions; saved users see a
+// normal account button instead.
 const anonymous = computed(() => isAnonymousSession(session.value));
 const email = computed(() => session.value?.user?.email || '');
 const buttonLabel = computed(() => anonymous.value ? 'Save / sign in' : 'Account');
+
+// This footer string is the human-facing identity summary. Profiles supply the
+// collaborative display name, while Supabase Auth supplies persistence/email.
 const identityLabel = computed(() => {
   const name = profile.value?.display_name || 'Town Red user';
   if (anonymous.value) return `${name} · temporary identity`;
   return email.value ? `${name} · ${email.value}` : `${name} · saved identity`;
 });
 
+// Load session and profile together so the account button/footer cannot briefly
+// describe one user while showing another user's display name.
 async function loadIdentity() {
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
@@ -35,6 +45,8 @@ onMounted(() => {
 </script>
 
 <template>
+  <!-- Teleport lets auth remain a separate Vue tree while appearing in the
+       header/footer owned by App.vue. -->
   <Teleport to="header > div:first-child > div:last-child">
     <button
       type="button"
