@@ -1,6 +1,9 @@
 <script setup>
 import BaseDialog from './BaseDialog.vue';
 
+// A deliberately tiny generic modal for errors/notices that need more space
+// than the status pill. Keeping this separate prevents App.vue from duplicating
+// dialog markup every time it needs to explain a recoverable failure.
 defineProps({
   open: Boolean,
   title: { type: String, default: 'Town Red' },
