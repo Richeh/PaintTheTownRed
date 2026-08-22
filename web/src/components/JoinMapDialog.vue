@@ -2,6 +2,9 @@
 import { ref, watch } from 'vue';
 import BaseDialog from './BaseDialog.vue';
 
+// JoinMapDialog accepts either the bare invite token or the full Town Red URL.
+// App.vue normalises and redeems the value; the dialog only collects input and
+// displays busy/error state.
 const props = defineProps({
   open: Boolean,
   busy: Boolean,
@@ -11,6 +14,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'submit']);
 const invite = ref('');
 
+// When opened automatically from an invite URL, pre-fill the token/link so the
+// same component can support both manual joining and URL-driven onboarding.
 watch(() => props.open, (open) => {
   if (open) invite.value = props.initialValue;
 });
