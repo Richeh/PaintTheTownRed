@@ -10,6 +10,12 @@ import {
   verifySignInOtp,
 } from '../supabase.js';
 
+// AccountDialog covers three related states:
+//   1. an anonymous user saving the current identity with an email address;
+//   2. an anonymous user choosing to sign into an existing identity instead;
+//   3. an already-saved user viewing the account and signing out.
+// The actual OTP form is shared with onboarding so both entry points follow the
+// same email-first, code-second state machine.
 const props = defineProps({
   open: { type: Boolean, default: false },
   anonymous: { type: Boolean, default: true },
@@ -22,6 +28,8 @@ const busy = ref(false);
 const error = ref('');
 const success = ref('');
 
+// Reopening must reflect the current Supabase session rather than whatever tab
+// the user last selected the previous time the dialog was open.
 watch(
   () => props.open,
   (open) => {
@@ -36,6 +44,8 @@ function errorText(value) {
   return value instanceof Error ? value.message : String(value);
 }
 
+// OtpAuthForm supplies markSent. Calling it only after Supabase accepts the
+// request prevents the verification-code step appearing before an email exists.
 async function sendOtp(email, markSent) {
   busy.value = true;
   error.value = '';
@@ -44,7 +54,7 @@ async function sendOtp(email, markSent) {
     if (mode.value === 'claim') await sendAccountClaimOtp(email);
     else await sendSignInOtp(email);
     markSent();
-    success.value = `A six-digit code has been sent to ${email}.`;
+    success.value = `A verification code has been sent to ${email}.`;
   } catch (err) {
     error.value = errorText(err);
   } finally {
@@ -52,6 +62,9 @@ async function sendOtp(email, markSent) {
   }
 }
 
+// Claiming an email preserves the current auth.uid(); signing in replaces it
+// with an existing one. In either case a reload is intentional, because it lets
+// the whole application rebuild map/realtime state under one authoritative uid.
 async function verifyOtp(email, token) {
   busy.value = true;
   error.value = '';
