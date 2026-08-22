@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 
+// This is intentionally a dumb, reusable two-step form. It does not call
+// Supabase itself: AccountDialog and ProfileDialog decide whether a code means
+// "claim this anonymous identity" or "sign into an existing identity".
 const props = defineProps({
   mode: { type: String, required: true }, // 'claim' | 'signin'
   busy: { type: Boolean, default: false },
@@ -19,6 +22,8 @@ const isClaim = computed(() => props.mode === 'claim');
 // numeric code from 6 to 10 digits, so the UI must not assume the default 6.
 const validToken = computed(() => /^\d{6,10}$/.test(token.value.trim()));
 
+// Switching between "save identity" and "sign in" is a genuinely new auth
+// attempt, so do not carry an email/code from the previous mode into it.
 watch(
   () => props.mode,
   () => {
@@ -28,6 +33,8 @@ watch(
   },
 );
 
+// The parent receives a callback rather than us immediately setting codeSent.
+// It calls markSent only after Supabase has accepted the email-send request.
 function send() {
   const address = email.value.trim();
   if (address) emit('send', address, () => { codeSent.value = true; });
@@ -38,6 +45,8 @@ function verify() {
   if (validToken.value) emit('verify', email.value.trim(), code);
 }
 
+// Let the user correct an address without closing/reopening the surrounding
+// dialog. The email stays populated as a convenience; only the code is reset.
 function startAgain() {
   token.value = '';
   codeSent.value = false;
@@ -55,6 +64,7 @@ function startAgain() {
       </template>
     </p>
 
+    <!-- Step one exists alone in the DOM until the email send succeeds. -->
     <form v-if="!codeSent" class="mt-4" @submit.prevent="send">
       <label class="block text-sm font-medium text-stone-700">
         Email
@@ -82,6 +92,7 @@ function startAgain() {
       </div>
     </form>
 
+    <!-- Step two replaces the email form; it is never merely hidden by CSS. -->
     <form v-else class="mt-4" @submit.prevent="verify">
       <p class="rounded-lg bg-stone-100 px-3 py-2 text-sm text-stone-700">
         Code sent to <strong>{{ email }}</strong>.
