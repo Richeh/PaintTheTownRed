@@ -1,5 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
+// All web-client authentication lives in this module. The rest of the app asks
+// for Town Red operations such as "ensure a session" or "send a sign-in code"
+// and does not need to know which Supabase Auth calls implement them.
+//
+// The application deliberately starts anonymous: users can use Town Red without
+// registration, then attach an email to that same auth.uid() later. Returning
+// users recover the saved uid with a passwordless email OTP.
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -9,6 +16,9 @@ if (!supabaseUrl || !supabaseKey) {
   );
 }
 
+// Supabase persists and refreshes sessions in browser storage. URL detection is
+// left enabled for compatibility with any Auth callback links, even though the
+// primary Town Red login UX uses codes entered in the existing browser tab.
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     persistSession: true,
@@ -17,10 +27,13 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
   },
 });
 
+// Supabase marks anonymous users explicitly on the Auth user object. This is
+// more reliable than inferring persistence from the presence of an email field.
 export function isAnonymousSession(session) {
   return Boolean(session?.user?.is_anonymous);
 }
 
+// Create the disposable identity used for first-run Town Red sessions.
 async function createAnonymousSession() {
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error) throw error;
@@ -69,6 +82,9 @@ export async function ensureAnonymousSession() {
  * Start converting the currently signed-in anonymous identity to a permanent
  * email identity. Supabase keeps the same auth user id, so map ownership and
  * memberships continue to refer to the same user.
+ *
+ * `updateUser({ email })` sends the project's Change Email Address template.
+ * That template must expose `{{ .Token }}` for Town Red's code-based UI.
  */
 export async function sendAccountClaimOtp(email) {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -94,7 +110,7 @@ export async function verifyAccountClaimOtp(email, token) {
 }
 
 /**
- * Send a returning-user OTP. shouldCreateUser:false is intentional: a typo or
+ * Send a returning-user OTP. `shouldCreateUser:false` is intentional: a typo or
  * unknown email must not silently create another Town Red identity.
  */
 export async function sendSignInOtp(email) {
@@ -117,6 +133,8 @@ export async function verifySignInOtp(email, token) {
   return data.session;
 }
 
+// Sign-out removes the saved identity from this browser. The caller reloads the
+// app afterwards; startup then creates a fresh anonymous session for onboarding.
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
