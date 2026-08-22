@@ -19,6 +19,12 @@ The web client is **Vue 3 + Vite + Tailwind + MapLibre + Supabase**.
 
 The map renderer is intentionally not a Vue component internally. MapLibre, canvas pointer capture and DOM markers are imperative APIs, so `map.js` exposes a small public API (`setStrokes`, `setEditor`, `fitToStrokes`, `destroy`, etc.) that Vue controls.
 
+### Collaborator layers and colours
+
+Every contributor has one local-visibility layer on a shared map. That layer contains **both** the person's brush strokes and their point markers, so hiding a collaborator removes all of their map annotations from the current screen without changing shared data.
+
+Each profile also has a stable pastel `marker_colour`. The database assigns the colour deterministically from the user's id and stores it on the profile, so the same person keeps the same visual identity across maps, browsers and devices. Point-marker backgrounds and layer-panel swatches use that colour.
+
 ### Authentication model
 
 Town Red is anonymous-first.
@@ -75,7 +81,7 @@ Core concepts:
 - `map_members` — editor/viewer memberships; ownership is implicit via `maps.owner_id`.
 - `strokes` — immutable geographic paint operations with a database sequence for deterministic replay.
 - `markers` — labelled geographic points, optionally linked to a Rightmove listing.
-- `profiles` — collaborative display names only; authentication/email remain in Supabase Auth.
+- `profiles` — collaborative display names and stable pastel marker colours; authentication/email remain in Supabase Auth.
 - `map_invites` — hashed invite tokens with role, expiry and optional usage limits.
 
 Row-level security is the real authorization boundary. Client-side role checks exist for UX but are never the security mechanism.
@@ -123,6 +129,8 @@ Use the Supabase CLI against the intended project and apply migrations in timest
 - **Do not silently replace an established extension identity.** Map memberships are attached to `auth.uid()`. The extension keeps a separate established-user guard specifically to prevent a broken session from quietly becoming a new anonymous user.
 - **Do not derive security from UI roles.** Keep authorization in RLS/security-definer functions.
 - **Keep strokes ordered and immutable.** Erasing is an ordered `erase` stroke, not mutation of earlier strokes.
+- **Keep points on their creator's layer.** `created_by` is the shared grouping key for both strokes and markers; layer visibility must apply to both.
+- **Keep collaborator colours on profiles.** Do not copy `marker_colour` onto every marker row; profile lookup is the source of truth.
 - **Store geographic sizes/positions, not display pixels.** Brush width is persisted in metres; coordinates are latitude/longitude.
 - **Tear down Realtime when switching maps.** Both the web app and extension scope subscriptions to the selected map.
 - **Treat Rightmove DOM as unstable.** Use canonical listing URLs and the captured Google Map/projection where possible; popup DOM is only a presentation hook.
