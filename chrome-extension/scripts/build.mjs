@@ -7,6 +7,13 @@ import { watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// ---------------------------------------------------------------------------
+// Build inputs / outputs
+// ---------------------------------------------------------------------------
+// The Chrome extension deliberately reuses the Tampermonkey userscript as its
+// main source of Rightmove/map behaviour. This build script converts the few
+// userscript-only APIs (unsafeWindow/GM_*), injects extension-only property
+// capture features, bundles Supabase locally, and produces Chrome-ready assets.
 const here = path.dirname(fileURLToPath(import.meta.url));
 const extensionRoot = path.resolve(here, '..');
 const repoRoot = path.resolve(extensionRoot, '..');
@@ -17,6 +24,13 @@ const sourceIconPath = path.join(repoRoot, 'assets', 'logo', 'townred.png');
 const distDir = path.join(extensionRoot, 'dist');
 const releaseDir = path.join(extensionRoot, 'release');
 
+// ---------------------------------------------------------------------------
+// Userscript compatibility shims
+// ---------------------------------------------------------------------------
+// Tampermonkey supplies GM_* storage and a global Supabase library. Chrome does
+// not, so the bundled extension replaces those APIs with localStorage and an
+// npm-bundled @supabase/supabase-js client. The prefix keeps Town Red values
+// isolated from Rightmove's own localStorage keys.
 const storageShim = String.raw`
 import { createClient } from '@supabase/supabase-js';
 const supabase = { createClient };
@@ -26,6 +40,10 @@ function GM_setValue(key, value) { try { window.localStorage.setItem(STORAGE_PRE
 function GM_deleteValue(key) { try { window.localStorage.removeItem(STORAGE_PREFIX + key); } catch {} }
 `;
 
+// Rightmove constructs Google Maps very early. This tiny document-start script
+// wraps the constructor before the main content script runs and remembers map
+// instances on window.__townRedMaps. The main userscript can then attach its
+// OverlayView to the real Rightmove map instead of trying to locate it in DOM.
 const earlyMapHook = String.raw`(() => {
   'use strict';
   window.__townRedMaps ||= [];
@@ -52,6 +70,10 @@ const earlyMapHook = String.raw`(() => {
   setTimeout(() => clearInterval(timer), 30000);
 })();`;
 
+// The extension adds persisted point markers/property links on top of the
+// userscript's original stroke state. This small state block is inserted next
+// to `let strokes = []`, while the feature functions themselves come from
+// src/listing-capture.js below.
 const listingMarkerState = String.raw`
     let markers = [];
     const markerLayer = document.createElement('div');
@@ -60,10 +82,16 @@ const listingMarkerState = String.raw`
     document.documentElement.appendChild(markerLayer);
 `;
 
+// ---------------------------------------------------------------------------
+// Source-transform helpers
+// ---------------------------------------------------------------------------
 function normalizeNewlines(value) {
   return String(value).replace(/\r\n/g, '\n');
 }
 
+// These transforms intentionally fail loudly when an expected userscript anchor
+// disappears. A silent partial build would be much worse: Chrome could package
+// an extension that loads successfully but has missing marker/auth behaviour.
 function replaceRequired(source, needle, replacement, label) {
   // Git may check files out with CRLF on Windows. Normalizing here keeps the
   // source transforms deterministic across Windows/Linux/macOS instead of
@@ -86,10 +114,17 @@ function replaceRegexRequired(source, regex, replacement, label) {
   return normalizedSource.replace(regex, normalizeNewlines(replacement));
 }
 
+// ---------------------------------------------------------------------------
+// Tampermonkey -> Chrome transformation
+// ---------------------------------------------------------------------------
 function transformUserscript(source, version, listingMarkerFunctions) {
+  // Chrome does not need the Tampermonkey metadata block; manifest.json carries
+  // the equivalent match/permission/version information.
   const withoutHeader = source.replace(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\s*/, '');
   let transformed = storageShim + '\n' + withoutHeader;
 
+  // The Chrome content script already runs in the page's MAIN world, so normal
+  // `window` replaces Tampermonkey's unsafeWindow bridge.
   transformed = replaceRequired(transformed, 'const PAGE = unsafeWindow;', 'const PAGE = window;', 'unsafeWindow bridge');
   transformed = replaceRequired(transformed, "const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;", 'const sbLibrary = supabase;', 'Supabase bridge');
   transformed = transformed.replace(/Rightmove shared geographic client v[\d.]+ loaded/, `Rightmove Chrome extension client v${version} loaded`);
@@ -108,6 +143,9 @@ function transformUserscript(source, version, listingMarkerFunctions) {
     );
   }
 
+  // From this point on, each transform connects the extension-only marker
+  // feature to one existing userscript lifecycle hook. listing-capture.js owns
+  // the feature logic; build.mjs only supplies the integration seams.
   transformed = replaceRegexRequired(
     transformed,
     /(^[ \t]*let strokes = \[\];[ \t]*)(\r?\n)/m,
@@ -169,43 +207,135 @@ function transformUserscript(source, version, listingMarkerFunctions) {
     'marker periodic sync'
   );
 
+  // Final verification catches an accidental no-op transform even if individual
+  // anchors happened to match. Both core marker state and click capture must be
+  // present in the code handed to esbuild.
   if (!transformed.includes('let markers = [];') || !transformed.includes('async function captureRightmoveProperty')) {
     throw new Error('[Town Red] Extension build verification failed: listing capture feature is incomplete');
   }
   return transformed;
 }
 
+// ---------------------------------------------------------------------------
+// Asset generation and bundling
+// ---------------------------------------------------------------------------
 async function buildIcons() {
   const iconDir = path.join(distDir, 'icons');
   await mkdir(iconDir, { recursive: true });
-  for (const size of [16, 32, 48, 128]) await sharp(sourceIconPath).resize(size, size, { fit: 'contain' }).png().toFile(path.join(iconDir, `icon-${size}.png`));
+
+  // Keep one source artwork in the repo; Sharp creates the exact PNG sizes the
+  // Chrome manifest expects so icon variants cannot drift apart manually.
+  for (const size of [16, 32, 48, 128]) {
+    await sharp(sourceIconPath)
+      .resize(size, size, { fit: 'contain' })
+      .png()
+      .toFile(path.join(iconDir, `icon-${size}.png`));
+  }
 }
 
 async function buildOnce({ production = false } = {}) {
+  // Read all mutable inputs together so one build uses a coherent snapshot.
   const [source, listingMarkerFunctions, manifestText] = await Promise.all([
-    readFile(userscriptPath, 'utf8'), readFile(listingCapturePath, 'utf8'), readFile(manifestPath, 'utf8')
+    readFile(userscriptPath, 'utf8'),
+    readFile(listingCapturePath, 'utf8'),
+    readFile(manifestPath, 'utf8'),
   ]);
   const manifest = JSON.parse(manifestText);
   const entry = transformUserscript(source, manifest.version, listingMarkerFunctions);
-  await rm(distDir, { recursive: true, force: true }); await mkdir(distDir, { recursive: true });
+
+  // dist/ is disposable. Recreate it on every build so deleted/renamed source
+  // assets cannot linger in a package by accident.
+  await rm(distDir, { recursive: true, force: true });
+  await mkdir(distDir, { recursive: true });
   await writeFile(path.join(distDir, 'map-hook.js'), earlyMapHook);
-  await build({ stdin: { contents: entry, loader: 'js', resolveDir: extensionRoot, sourcefile: 'town-red-rightmove-extension.js' }, bundle: true, format: 'iife', platform: 'browser', target: ['chrome120'], minify: production, sourcemap: production ? false : 'inline', legalComments: production ? 'none' : 'inline', outfile: path.join(distDir, 'content.js'), logLevel: 'info' });
-  await buildIcons(); await writeFile(path.join(distDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`[Town Red] Chrome extension ${production ? 'production ' : ''}build complete`); return manifest;
+
+  // esbuild bundles Supabase and the transformed content script into a single
+  // IIFE suitable for a Manifest V3 MAIN-world content script.
+  await build({
+    stdin: {
+      contents: entry,
+      loader: 'js',
+      resolveDir: extensionRoot,
+      sourcefile: 'town-red-rightmove-extension.js',
+    },
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: ['chrome120'],
+    minify: production,
+    sourcemap: production ? false : 'inline',
+    legalComments: production ? 'none' : 'inline',
+    outfile: path.join(distDir, 'content.js'),
+    logLevel: 'info',
+  });
+
+  await buildIcons();
+  await writeFile(path.join(distDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`[Town Red] Chrome extension ${production ? 'production ' : ''}build complete`);
+  return manifest;
 }
 
+// ---------------------------------------------------------------------------
+// Chrome Web Store package creation
+// ---------------------------------------------------------------------------
 async function addDirectoryToZip(zipFile, directory, root = directory) {
   const entries = await readdir(directory, { withFileTypes: true });
-  for (const entry of entries) { const absolutePath = path.join(directory, entry.name); if (entry.isDirectory()) await addDirectoryToZip(zipFile, absolutePath, root); else if (entry.isFile()) zipFile.addFile(absolutePath, path.relative(root, absolutePath).split(path.sep).join('/'), { compress: true }); }
+  for (const entry of entries) {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await addDirectoryToZip(zipFile, absolutePath, root);
+    } else if (entry.isFile()) {
+      // ZIP paths always use forward slashes, even when packaging on Windows.
+      zipFile.addFile(absolutePath, path.relative(root, absolutePath).split(path.sep).join('/'), { compress: true });
+    }
+  }
 }
 
 async function packageRelease() {
-  const manifest = await buildOnce({ production: true }); await rm(releaseDir, { recursive: true, force: true }); await mkdir(releaseDir, { recursive: true });
+  // Packaging always performs a fresh production build first; release ZIPs are
+  // never assembled from whatever happens to be in an old dist/ directory.
+  const manifest = await buildOnce({ production: true });
+  await rm(releaseDir, { recursive: true, force: true });
+  await mkdir(releaseDir, { recursive: true });
+
   const zipPath = path.join(releaseDir, `town-red-rightmove-${manifest.version}.zip`);
-  await new Promise(async (resolve, reject) => { const zipFile = new yazl.ZipFile(); const output = createWriteStream(zipPath); output.on('close', resolve); output.on('error', reject); zipFile.outputStream.on('error', reject); zipFile.outputStream.pipe(output); try { await addDirectoryToZip(zipFile, distDir); zipFile.end(); } catch (error) { reject(error); } });
+  await new Promise(async (resolve, reject) => {
+    const zipFile = new yazl.ZipFile();
+    const output = createWriteStream(zipPath);
+    output.on('close', resolve);
+    output.on('error', reject);
+    zipFile.outputStream.on('error', reject);
+    zipFile.outputStream.pipe(output);
+    try {
+      await addDirectoryToZip(zipFile, distDir);
+      zipFile.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
   console.log(`[Town Red] Web Store package: ${zipPath}`);
 }
 
-const packageMode = process.argv.includes('--package'); const watchMode = process.argv.includes('--watch');
-if (packageMode) await packageRelease(); else await buildOnce();
-if (watchMode) { let timer = null; const rebuild = () => { clearTimeout(timer); timer = setTimeout(() => buildOnce().catch(console.error), 100); }; watch(userscriptPath, rebuild); watch(listingCapturePath, rebuild); watch(manifestPath, rebuild); watch(sourceIconPath, rebuild); console.log('[Town Red] Watching extension sources...'); }
+// ---------------------------------------------------------------------------
+// CLI modes
+// ---------------------------------------------------------------------------
+const packageMode = process.argv.includes('--package');
+const watchMode = process.argv.includes('--watch');
+
+if (packageMode) await packageRelease();
+else await buildOnce();
+
+// Watch source files rather than dist/. The short debounce collapses editors
+// that emit several filesystem events for one save into a single rebuild.
+if (watchMode) {
+  let timer = null;
+  const rebuild = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => buildOnce().catch(console.error), 100);
+  };
+  watch(userscriptPath, rebuild);
+  watch(listingCapturePath, rebuild);
+  watch(manifestPath, rebuild);
+  watch(sourceIconPath, rebuild);
+  console.log('[Town Red] Watching extension sources...');
+}
