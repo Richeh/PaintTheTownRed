@@ -2,6 +2,9 @@
 import { ref, watch } from 'vue';
 import BaseDialog from './BaseDialog.vue';
 
+// InviteMapDialog has two phases: collect the access policy for a new invite,
+// then display the returned share URL. App.vue owns the RPC call itself so this
+// component never needs direct database knowledge.
 const props = defineProps({
   open: Boolean,
   mapName: { type: String, default: 'this map' },
@@ -14,6 +17,7 @@ const emit = defineEmits(['close', 'submit']);
 const role = ref('editor');
 const maxUses = ref('1');
 
+// Start each invite from conservative defaults: editor access and one use.
 watch(() => props.open, (open) => {
   if (open) {
     role.value = 'editor';
@@ -21,12 +25,16 @@ watch(() => props.open, (open) => {
   }
 });
 
+// Blank max-uses means unlimited. App.vue validates positive integer values
+// before it calls the database RPC.
 function submit() {
   const raw = maxUses.value.trim();
   const parsed = raw === '' ? null : Number(raw);
   emit('submit', { role: role.value, maxUses: parsed });
 }
 
+// Clipboard access is user-triggered, which keeps it within normal browser
+// permission rules. The raw token remains available as a fallback below.
 async function copyInvite() {
   if (!props.inviteUrl) return;
   await navigator.clipboard.writeText(props.inviteUrl);
