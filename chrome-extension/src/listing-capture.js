@@ -1,4 +1,34 @@
+    const ESTABLISHED_USER_KEY = 'town-red-established-user-id';
+    const originalAnonymousSignIn = sb.auth.signInAnonymously.bind(sb.auth);
+
+    // Keep a durable record of the Town Red identity used by this browser. If
+    // Supabase session restoration ever fails, do not silently mint a new
+    // anonymous user: that would make all existing map memberships appear to
+    // vanish even though they still belong to the previous auth user.
+    sb.auth.onAuthStateChange((_event, session) => {
+      const sessionUserId = session?.user?.id;
+      if (!sessionUserId) return;
+      const establishedUserId = GM_getValue(ESTABLISHED_USER_KEY, null);
+      if (!establishedUserId) GM_setValue(ESTABLISHED_USER_KEY, sessionUserId);
+    });
+
+    sb.auth.signInAnonymously = async (...args) => {
+      const establishedUserId = GM_getValue(ESTABLISHED_USER_KEY, null);
+      if (establishedUserId) {
+        throw new Error(
+          `Town Red could not restore browser identity ${establishedUserId.slice(0, 8)}. ` +
+          'It will not create a replacement identity because that would lose access to joined maps. Reload once; if this persists, clear Town Red extension storage and rejoin deliberately.'
+        );
+      }
+      const result = await originalAnonymousSignIn(...args);
+      const newUserId = result?.data?.user?.id || result?.data?.session?.user?.id;
+      if (newUserId) GM_setValue(ESTABLISHED_USER_KEY, newUserId);
+      return result;
+    };
+
     let activeRightmoveProperty = null;
+    let propertyCaptureGeneration = 0;
+    let propertyCaptureTimers = [];
 
     function canonicalPropertyUrl(href) {
       if (!href) return null;
@@ -246,18 +276,22 @@
       active.popup.appendChild(wrapper);
     }
 
-    function inspectRightmovePropertyPopup(clientX, clientY, target, point) {
+    function inspectRightmovePropertyPopup(clientX, clientY, target, point, generation) {
+      if (generation !== propertyCaptureGeneration) return false;
+
       const link = nearestPropertyLink(clientX, clientY, target);
       const sourceUrl = canonicalPropertyUrl(link?.href);
       if (!sourceUrl) return false;
       const popup = findPropertyPopup(link);
       if (!popup) return false;
+      if (generation !== propertyCaptureGeneration) return false;
 
       activeRightmoveProperty = {
         sourceUrl,
         point,
         label: markerLabelFromLink(link, sourceUrl),
-        popup
+        popup,
+        generation
       };
       refreshRightmovePopupControl();
       return true;
@@ -275,16 +309,28 @@
 
       const point = screenToLatLng(event.clientX, event.clientY);
       if (!point) return;
-      const clientX = event.clientX, clientY = event.clientY, target = event.target;
 
+      const clientX = event.clientX, clientY = event.clientY, target = event.target;
+      const generation = ++propertyCaptureGeneration;
+
+      for (const timer of propertyCaptureTimers) clearTimeout(timer);
+      propertyCaptureTimers = [];
       activeRightmoveProperty = null;
       removeExistingPopupControls();
 
+      console.debug('[Town Red] captured property click coordinate', {
+        generation,
+        click: [clientX, clientY],
+        point
+      });
+
       for (const delay of [80, 180, 350, 650]) {
-        setTimeout(() => {
-          try { inspectRightmovePropertyPopup(clientX, clientY, target, point); }
+        const timer = setTimeout(() => {
+          if (generation !== propertyCaptureGeneration) return;
+          try { inspectRightmovePropertyPopup(clientX, clientY, target, point, generation); }
           catch (error) { console.warn('[Town Red] property popup decoration failed', error); }
         }, delay);
+        propertyCaptureTimers.push(timer);
       }
     }
 
@@ -307,6 +353,7 @@
         if (session?.user?.id === activeSession.user.id) {
           activeSession = session;
           userId = session.user.id;
+          GM_setValue(ESTABLISHED_USER_KEY, session.user.id);
           if (session.access_token) await sb.realtime.setAuth(session.access_token);
           updateControls();
         }
