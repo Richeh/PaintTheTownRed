@@ -2,6 +2,9 @@
 import { ref, watch } from 'vue';
 import BaseDialog from './BaseDialog.vue';
 
+// This component is deliberately presentation-only: it collects a map name
+// and emits it to App.vue. Database creation, selection and error recovery all
+// remain in the application controller rather than being hidden in the dialog.
 const props = defineProps({
   open: Boolean,
   busy: Boolean,
@@ -10,6 +13,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'submit']);
 const name = ref('House Search');
 
+// Reopening the dialog starts from a friendly default instead of retaining a
+// half-entered name from a cancelled attempt.
 watch(() => props.open, (open) => {
   if (open) name.value = 'House Search';
 });
