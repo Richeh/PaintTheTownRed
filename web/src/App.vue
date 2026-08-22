@@ -22,9 +22,10 @@ import ProfileDialog from './components/ProfileDialog.vue';
 // ---------------------------------------------------------------------------
 // Application state
 // ---------------------------------------------------------------------------
-// Vue is now the single source of truth for web-client UI state. The MapLibre
-// renderer remains deliberately framework-agnostic and is controlled through
-// its small public API below.
+// Vue is the single source of truth for web-client collaboration/UI state. The
+// MapLibre renderer remains deliberately framework-agnostic and is controlled
+// through its small public API below. Email/account controls live in AuthDock,
+// a separate Vue tree, so this component only needs to know the current uid.
 const mapContainer = ref(null);
 let renderer = null;
 let unsubscribeRealtime = null;
@@ -120,8 +121,9 @@ function errorText(error) {
 // ---------------------------------------------------------------------------
 // Profile onboarding
 // ---------------------------------------------------------------------------
-// The pre-account-conversion behaviour is retained: every fresh anonymous
-// identity must choose a display name, but there is no persistent login UI.
+// Every auth identity needs a collaborative display name. A new anonymous user
+// is held at this dialog until a profile exists; a returning user can instead
+// switch identities through ProfileDialog's OTP sign-in path before continuing.
 async function ensureDisplayName(id) {
   const existing = await getProfile(id);
   if (existing) {
