@@ -107,12 +107,14 @@ export async function createMapInvite({ mapId, role = 'editor', maxUses = 1 }) {
 // ---------------------------------------------------------------------------
 
 // Profiles deliberately contain only Town Red presentation data. Authentication
-// identity and email addresses remain owned by Supabase Auth.
+// identity and email addresses remain owned by Supabase Auth. marker_colour is a
+// stable pastel assigned by the database and reused anywhere that user's layer
+// needs a visual identity.
 export async function getProfile(userId) {
   if (!userId) return null;
   const { data, error } = await supabase
     .from('profiles')
-    .select('user_id,display_name,created_at,updated_at')
+    .select('user_id,display_name,marker_colour,created_at,updated_at')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw databaseError(error, 'Could not load profile');
@@ -120,12 +122,13 @@ export async function getProfile(userId) {
 }
 
 // Upsert lets first-run onboarding and later display-name edits share the same
-// database operation without a separate existence check.
+// database operation without a separate existence check. The colour is omitted
+// deliberately: the profile trigger owns its stable assignment.
 export async function saveProfile({ userId, displayName }) {
   const { data, error } = await supabase
     .from('profiles')
     .upsert({ user_id: userId, display_name: displayName.trim() }, { onConflict: 'user_id' })
-    .select('user_id,display_name,created_at,updated_at')
+    .select('user_id,display_name,marker_colour,created_at,updated_at')
     .single();
   if (error) throw databaseError(error, 'Could not save profile');
   return data;
@@ -138,7 +141,7 @@ export async function loadProfiles(userIds) {
   if (!ids.length) return [];
   const { data, error } = await supabase
     .from('profiles')
-    .select('user_id,display_name')
+    .select('user_id,display_name,marker_colour')
     .in('user_id', ids);
   if (error) throw error;
   return data || [];
