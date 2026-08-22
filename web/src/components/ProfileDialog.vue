@@ -4,6 +4,10 @@ import BaseDialog from './BaseDialog.vue';
 import OtpAuthForm from './OtpAuthForm.vue';
 import { sendSignInOtp, verifySignInOtp } from '../supabase.js';
 
+// ProfileDialog is the first-run gate. A new browser can either create a
+// temporary anonymous identity by choosing a display name, or recover an
+// existing saved identity with an email OTP. Keeping those two choices in one
+// component avoids creating a throwaway profile before a returning user signs in.
 const props = defineProps({
   open: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
@@ -17,6 +21,8 @@ const authBusy = ref(false);
 const authError = ref('');
 const authSuccess = ref('');
 
+// Treat every opening as a fresh onboarding attempt. This is especially useful
+// after sign-out, where the page reloads into a brand-new anonymous session.
 watch(
   () => props.open,
   (open) => {
@@ -29,11 +35,15 @@ watch(
   },
 );
 
+// Creating a temporary identity only needs a human-readable name; App.vue owns
+// the actual profiles-table write and waits for that write before continuing.
 function submit() {
   const value = displayName.value.trim();
   if (value) emit('submit', value);
 }
 
+// OtpAuthForm owns the two-step form state. The callback is invoked only after
+// Supabase accepts the send request, so the code field is never shown early.
 async function sendOtp(email, markSent) {
   authBusy.value = true;
   authError.value = '';
@@ -41,7 +51,7 @@ async function sendOtp(email, markSent) {
   try {
     await sendSignInOtp(email);
     markSent();
-    authSuccess.value = `A six-digit code has been sent to ${email}.`;
+    authSuccess.value = `A verification code has been sent to ${email}.`;
   } catch (error) {
     authError.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -49,6 +59,8 @@ async function sendOtp(email, markSent) {
   }
 }
 
+// We reload after an identity switch instead of trying to hot-swap every map,
+// realtime and profile subscription from one auth.uid() to another in-place.
 async function verifyOtp(email, token) {
   authBusy.value = true;
   authError.value = '';
