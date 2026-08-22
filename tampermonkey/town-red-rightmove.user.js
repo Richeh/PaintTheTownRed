@@ -16,14 +16,39 @@
 (() => {
   'use strict';
 
+  // -------------------------------------------------------------------------
+  // Shared Rightmove client architecture
+  // -------------------------------------------------------------------------
+  // This file is the common geographic/stroke client used by Tampermonkey and
+  // (after source transformation by chrome-extension/scripts/build.mjs) the
+  // packaged Chrome extension. Keep browser-extension-only behavior in
+  // chrome-extension/src/listing-capture.js where possible so the shared core
+  // remains understandable and testable on its own.
+  //
+  // The client has four responsibilities:
+  //   1. capture Rightmove's real Google Map instance;
+  //   2. maintain one anonymous Supabase identity and shared-map membership;
+  //   3. translate screen pixels <-> geographic coordinates via OverlayView;
+  //   4. draw/upload ordered strokes and keep them live with Realtime.
+
   const SUPABASE_URL = 'https://oikkiayjonjouernvjhw.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_LDxOd-ZDNBGVQBl9JzB1lQ_39TYzOwk';
+
+  // Tampermonkey isolates script globals from the page. unsafeWindow is the
+  // bridge to Rightmove's Google Maps objects. The extension build replaces
+  // this with ordinary window because its content script runs in MAIN world.
   const PAGE = unsafeWindow;
+
+  // Settings, Supabase auth and stroke caches use separate prefixes so upgrades
+  // can evolve one concern without invalidating the others accidentally.
   const SETTINGS_KEY = 'town-red-rightmove-v03-settings';
   const AUTH_PREFIX = 'town-red-rightmove-v03-sb-auth:';
   const CACHE_PREFIX = 'town-red-rightmove-v03-cache:';
   const DEFAULTS = { mode: 'navigate', brushSize: 42, opacity: 0.20 };
 
+  // -------------------------------------------------------------------------
+  // Capture Rightmove's Google Map instance as early as possible
+  // -------------------------------------------------------------------------
   PAGE.__townRedMaps ||= [];
 
   function rememberMap(map) {
@@ -34,6 +59,9 @@
     return map;
   }
 
+  // Replace the Google Maps constructor with a transparent wrapper that records
+  // each constructed map while preserving prototype/static behavior. Rightmove
+  // still receives a normal Map instance.
   function wrapMap(holder, key = 'Map') {
     if (!holder) return false;
     let Original;
@@ -57,6 +85,9 @@
     }
   }
 
+  // Modern Google Maps can expose constructors through importLibrary as well as
+  // google.maps.Map. Poll briefly at document-start so Town Red catches either
+  // loading route without permanently running a high-frequency timer.
   let importLibraryHooked = false;
   const captureTimer = setInterval(() => {
     const maps = PAGE.google?.maps;
@@ -77,6 +108,9 @@
 
   setTimeout(() => clearInterval(captureTimer), 30000);
 
+  // -------------------------------------------------------------------------
+  // Delay UI startup until the document can accept our overlay DOM
+  // -------------------------------------------------------------------------
   function startWhenReady() {
     if (document.documentElement && document.body && document.head) start();
     else requestAnimationFrame(startWhenReady);
@@ -89,14 +123,24 @@
   }
 
   function start() {
+    // A Rightmove SPA/navigation or duplicate userscript injection must never
+    // create a second Town Red toolbar/canvas on the same document.
     if (document.querySelector('#town-red-toolbar')) return;
 
+    // Tampermonkey loads Supabase through @require. The Chrome build replaces
+    // this bridge with its npm-bundled client.
     const sbLibrary = typeof supabase !== 'undefined' ? supabase : null;
     if (!sbLibrary?.createClient) {
       console.error('[Town Red] Supabase JS library did not load');
       return;
     }
 
+    // -----------------------------------------------------------------------
+    // Supabase client and persistent anonymous identity
+    // -----------------------------------------------------------------------
+    // GM storage survives Rightmove page reloads. Feeding it to Supabase Auth
+    // keeps the same anonymous auth.uid(), which is what map memberships and
+    // stroke ownership are attached to.
     const authStorage = {
       getItem: key => GM_getValue(AUTH_PREFIX + key, null),
       setItem: (key, value) => GM_setValue(AUTH_PREFIX + key, value),
@@ -112,6 +156,9 @@
       }
     });
 
+    // -----------------------------------------------------------------------
+    // Runtime state
+    // -----------------------------------------------------------------------
     let settings = { ...DEFAULTS, ...(GM_getValue(SETTINGS_KEY, {}) || {}) };
     let userId = null;
     let activeSession = null;
@@ -129,6 +176,12 @@
     let mapListeners = [];
     let spaceHeld = false;
 
+    // -----------------------------------------------------------------------
+    // Canvas overlay and toolbar
+    // -----------------------------------------------------------------------
+    // The canvas is position:fixed and continuously aligned with Rightmove's
+    // map rectangle. It accepts pointer events only while painting; navigation
+    // mode leaves the underlying Google Map fully interactive.
     const canvas = document.createElement('canvas');
     canvas.id = 'town-red-canvas';
     Object.assign(canvas.style, {
@@ -138,6 +191,8 @@
     document.documentElement.appendChild(canvas);
     const ctx = canvas.getContext('2d');
 
+    // The userscript intentionally uses a compact self-contained toolbar rather
+    // than depending on Rightmove's CSS/classes, which change independently.
     const toolbar = document.createElement('div');
     toolbar.id = 'town-red-toolbar';
     toolbar.innerHTML = `
@@ -215,6 +270,9 @@
     brushEl.value = settings.brushSize;
     opacityEl.value = settings.opacity;
 
+    // -----------------------------------------------------------------------
+    // UI/status helpers
+    // -----------------------------------------------------------------------
     function setSync(text, bad = false) {
       syncStatus.textContent = `Sync: ${text}`;
       syncStatus.style.color = bad ? '#a00000' : '#666';
@@ -222,6 +280,9 @@
 
     function saveSettings() { GM_setValue(SETTINGS_KEY, settings); }
     function cacheKey(mapId) { return CACHE_PREFIX + mapId; }
+
+    // Stroke cache is only a fast local preview. Supabase remains authoritative
+    // and replaces it whenever loadRemoteStrokes() completes successfully.
     function cacheStrokes() {
       if (selectedMapId) GM_setValue(cacheKey(selectedMapId), strokes);
       updateCount();
@@ -229,6 +290,8 @@
     function updateCount() { countEl.textContent = `${strokes.length} ${strokes.length === 1 ? 'stroke' : 'strokes'}`; }
     function canEdit() { return selectedRole === 'owner' || selectedRole === 'editor'; }
 
+    // Centralise enable/disable and canvas pointer-event rules so every state
+    // transition (auth, role, Space key, mode, map connection) stays consistent.
     function updateControls() {
       toolbar.querySelectorAll('[data-mode]').forEach(button => {
         button.dataset.active = String(button.dataset.mode === settings.mode);
@@ -257,12 +320,18 @@
       }
     }
 
+    // -----------------------------------------------------------------------
+    // Authentication lifecycle
+    // -----------------------------------------------------------------------
     function sessionUsable(session) {
       if (!session?.user?.id || !session?.access_token) return false;
       const expiresAtMs = Number(session.expires_at || 0) * 1000;
       return !expiresAtMs || expiresAtMs > Date.now() + 30000;
     }
 
+    // Only one auth restoration/refresh may run at a time. More importantly,
+    // once an identity has been established this function refuses to silently
+    // switch to another uid; memberships/stroke ownership are uid-bound.
     async function ensureAuth() {
       if (sessionUsable(activeSession)) return activeSession;
       if (authPromise) return authPromise;
@@ -308,6 +377,8 @@
       finally { authPromise = null; }
     }
 
+    // Auto-refresh events update our cached session and Realtime JWT, but an
+    // unexpected uid change is ignored rather than silently changing identity.
     sb.auth.onAuthStateChange((_event, session) => {
       if (session?.user?.id && userId && session.user.id !== userId) {
         console.error('[Town Red] ignoring unexpected auth identity change', userId, session.user.id);
@@ -325,6 +396,9 @@
       updateControls();
     });
 
+    // -----------------------------------------------------------------------
+    // Shared maps, roles and invites
+    // -----------------------------------------------------------------------
     async function refreshMaps(preferId = selectedMapId) {
       await ensureAuth();
       setSync('loading maps…');
@@ -346,6 +420,8 @@
       setSync('connected');
     }
 
+    // Owners can be identified directly from maps.owner_id. Non-owners ask the
+    // database helper so map_members itself does not need to be broadly readable.
     async function determineRole(mapId) {
       await ensureAuth();
       selectedRole = null;
@@ -380,6 +456,8 @@
       setSync('joining…');
       const result = await sb.rpc('join_map_with_invite', { p_token: token.trim() });
       if (result.error) throw result.error;
+
+      // Normalise possible scalar/table RPC response shapes to one map id.
       const joinedId = typeof result.data === 'string'
         ? result.data
         : Array.isArray(result.data)
@@ -421,6 +499,9 @@
       window.prompt(`Copy this ${role} invite token and send it to your friend.\n\nIt is shown only now:`, token);
     }
 
+    // -----------------------------------------------------------------------
+    // Stroke loading, optimistic writes and Realtime
+    // -----------------------------------------------------------------------
     async function selectSharedMap(mapId) {
       await ensureAuth();
       unsubscribeRealtime();
@@ -434,6 +515,9 @@
       }
 
       await determineRole(selectedMapId);
+
+      // Paint cached from the previous visit can render immediately while the
+      // authoritative database rows are loading.
       strokes = GM_getValue(cacheKey(selectedMapId), []) || [];
       sortStrokes(); updateCount(); redraw();
       await loadRemoteStrokes();
@@ -450,12 +534,16 @@
         .select('id,sequence,map_id,created_by,mode,brush_metres,opacity,points,created_at')
         .eq('map_id', mapIdAtStart).order('sequence', { ascending: true });
       if (result.error) throw result.error;
+
+      // A slow response for an old selection must not overwrite a newer map.
       if (selectedMapId !== mapIdAtStart) return;
       strokes = result.data || [];
       cacheStrokes(); redraw();
       setSync(realtimeChannel ? 'live' : 'connected');
     }
 
+    // Database sequence is the authoritative compositing order. Pending local
+    // rows use MAX_SAFE_INTEGER until the insert response supplies a sequence.
     function sortStrokes() {
       strokes.sort((a, b) => {
         const aa = Number.isFinite(Number(a.sequence)) ? Number(a.sequence) : Number.MAX_SAFE_INTEGER;
@@ -476,6 +564,8 @@
       if (!selectedMapId) return;
       unsubscribeRealtime();
 
+      // Realtime has its own websocket auth state, so explicitly give it the
+      // freshest access token before opening a channel.
       const sessionResult = await sb.auth.getSession();
       if (sessionResult.error) throw sessionResult.error;
       const session = sessionResult.data.session || activeSession;
@@ -505,6 +595,8 @@
       realtimeChannel = null;
     }
 
+    // Draw optimistically so painting feels immediate. If the database insert
+    // fails, remove the temporary row and redraw from the previous stable state.
     async function uploadStroke(stroke) {
       await ensureAuth();
       if (!selectedMapId || !userId || !canEdit()) return;
@@ -525,6 +617,8 @@
       mergeStroke(result.data); setSync('live');
     }
 
+    // Undo is intentionally "my latest saved stroke", not a global history
+    // rewind, so one editor cannot accidentally undo another editor's work.
     async function undoMine() {
       await ensureAuth();
       if (!selectedMapId || !userId || !canEdit()) return;
@@ -549,6 +643,9 @@
       window.alert(`Town Red:\n${message}`);
     }
 
+    // -----------------------------------------------------------------------
+    // Connecting the canvas to the actual Google Map
+    // -----------------------------------------------------------------------
     function mapUsable(candidate) {
       if (!candidate || typeof candidate.getDiv !== 'function') return false;
       try {
@@ -558,6 +655,8 @@
       } catch { return false; }
     }
 
+    // Rightmove may create more than one Google Map during page lifecycle; the
+    // newest large, connected instance is usually the visible property map.
     function findMap() {
       const maps = PAGE.__townRedMaps || [];
       for (let i = maps.length - 1; i >= 0; i--) if (mapUsable(maps[i])) return maps[i];
@@ -573,6 +672,8 @@
       mapListeners = [];
     }
 
+    // OverlayView exists solely to obtain Google's projection object. Town Red
+    // draws on its own canvas rather than adding content to Google overlay panes.
     function connectMap(candidate) {
       if (!candidate || candidate === map) return;
       clearMapListeners();
@@ -616,6 +717,8 @@
       updateGeoStatus();
     }
 
+    // Keep the fixed canvas exactly over the current map rectangle and scale its
+    // backing store for high-DPI screens.
     function updateCanvasBounds() {
       if (!map) return;
       let rect;
@@ -636,6 +739,8 @@
       updateControls();
     }
 
+    // Convert page/client coordinates to Google container pixels by subtracting
+    // the map's viewport offset, then ask OverlayView for the geographic point.
     function screenToLatLng(clientX, clientY) {
       if (!projection || !mapRect) return null;
       const gm = PAGE.google?.maps;
@@ -645,6 +750,7 @@
       } catch { return null; }
     }
 
+    // The reverse conversion returns high-DPI canvas pixels, not CSS pixels.
     function latLngToCanvas(point) {
       if (!projection || !point) return null;
       const gm = PAGE.google?.maps;
@@ -656,6 +762,9 @@
       } catch { return null; }
     }
 
+    // Prefer Google's spherical geometry helper when available; fall back to a
+    // Haversine implementation so brush sampling still works if that library is
+    // not loaded on a particular Rightmove page.
     function distanceMetres(a, b) {
       const gm = PAGE.google?.maps;
       try {
@@ -672,6 +781,8 @@
       return 2 * R * Math.asin(Math.sqrt(h));
     }
 
+    // Brush size is configured in convenient screen pixels but stored in metres,
+    // ensuring saved paint keeps the same geographic footprint at every zoom.
     function brushPixelsToMetres(clientX, clientY, pixels) {
       const a = screenToLatLng(clientX, clientY);
       const b = screenToLatLng(clientX + pixels, clientY);
@@ -695,10 +806,16 @@
       } catch { return 1; }
     }
 
+    // -----------------------------------------------------------------------
+    // Canvas stroke rendering
+    // -----------------------------------------------------------------------
     function normalizeStroke(row) {
       return { ...row, brushMetres: row.brushMetres ?? row.brush_metres, points: Array.isArray(row.points) ? row.points : [] };
     }
 
+    // Erase is represented as an ordered stroke using destination-out blending,
+    // not as deletion of earlier rows. Replaying sequence therefore reproduces
+    // the same final overlay for every collaborator.
     function drawStroke(raw) {
       const stroke = normalizeStroke(raw);
       if (!stroke.points.length || !projection) return;
@@ -736,6 +853,9 @@
       if (currentStroke) drawStroke(currentStroke);
     }
 
+    // -----------------------------------------------------------------------
+    // Pointer input / freehand sampling
+    // -----------------------------------------------------------------------
     canvas.addEventListener('pointerdown', event => {
       if (!selectedMapId || !canEdit() || settings.mode === 'navigate' || spaceHeld || !projection) return;
       event.preventDefault();
@@ -747,6 +867,8 @@
       redraw();
     });
 
+    // Sample by real-world distance rather than every pointer event. This keeps
+    // stored JSON reasonably small while retaining smooth lines.
     canvas.addEventListener('pointermove', event => {
       if (!currentStroke || !projection) return;
       event.preventDefault();
@@ -771,6 +893,9 @@
     canvas.addEventListener('pointerup', finishStroke);
     canvas.addEventListener('pointercancel', finishStroke);
 
+    // -----------------------------------------------------------------------
+    // Toolbar and keyboard interactions
+    // -----------------------------------------------------------------------
     toolbar.querySelectorAll('[data-mode]').forEach(button => {
       button.addEventListener('click', () => {
         settings.mode = button.dataset.mode; saveSettings(); updateControls();
@@ -789,6 +914,8 @@
     $('#tr-undo').addEventListener('click', () => undoMine().catch(reportError));
     $('#tr-refresh').addEventListener('click', () => loadRemoteStrokes().catch(reportError));
 
+    // Space temporarily hands pointer control back to Google Maps while painting;
+    // Ctrl/Cmd-Z undoes only this identity's latest saved stroke.
     document.addEventListener('keydown', event => {
       const inputActive = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
       if (event.code === 'Space' && !event.repeat && !inputActive) {
@@ -805,6 +932,8 @@
     window.addEventListener('resize', () => { updateCanvasBounds(); redraw(); });
     window.addEventListener('scroll', () => { updateCanvasBounds(); redraw(); }, true);
 
+    // Realtime is the fast path. Periodic full refresh is a deliberately boring
+    // recovery path for dropped websocket events or long-lived browser tabs.
     setInterval(async () => {
       if (!selectedMapId) return;
       try {
@@ -815,9 +944,13 @@
       }
     }, 10000);
 
+    // Map detection continues at a low frequency because Rightmove can replace
+    // its map instance during SPA navigation/filter changes.
     updateCount(); updateControls();
     setInterval(lookForMap, 250);
 
+    // Authenticate before querying maps. This IIFE keeps async startup out of
+    // the synchronous DOM-construction portion of start().
     (async () => {
       try {
         await ensureAuth();
